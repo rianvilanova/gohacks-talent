@@ -45,3 +45,6 @@ next-env.d.ts
 /data/pagamentos/
 /data/*.pdf
 /.claude/
+
+# instruções do assistente (ficam só local)
+/CLAUDE.md
