@@ -222,13 +222,23 @@ export default function Painel() {
         {/* ---------- esquerda: abas ---------- */}
         <div className="lg:col-span-3">
           <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm">
-            {([["pedidos", "Pedidos de ontem"], ["regioes", "Regiões (revisão semanal)"], ["impacto", "Impacto financeiro"]] as [Aba, string][]).map(([k, t]) => (
+            {([["pedidos", "Diário · pedidos de ontem"], ["regioes", "Semanal · prazo das regiões"], ["impacto", "Impacto financeiro"]] as [Aba, string][]).map(([k, t]) => (
               <button key={k} onClick={() => setAba(k)} className={`flex-1 rounded-lg px-3 py-2 ${aba === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{t}</button>
             ))}
           </div>
 
           {aba === "regioes" && (
             <section className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
+              <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs text-violet-950">
+                <div className="text-sm font-semibold">Toda segunda, 7h · o agente revisa as 154 regiões com as últimas 4 semanas</div>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                  <li>Prometer menos dias onde a entrega sobra (recupera venda)</li>
+                  <li>Prometer mais dias onde atrasa e compensa</li>
+                  <li>Abrir incidente com a transportadora que falha numa região</li>
+                  <li>Trocar a transportadora padrão da região</li>
+                </ul>
+                <div className="mt-1 text-violet-800">Essas mudanças mexem no site: o agente propõe, o gerente aprova (painel à direita).</div>
+              </div>
               <h2 className="font-semibold">Situação de cada região (CEP)</h2>
               <p className="text-xs text-slate-500">Passe o mouse sobre cada situação para ver o significado.</p>
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -271,6 +281,14 @@ export default function Painel() {
             <section className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
+                  <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-950">
+                    <div className="text-sm font-semibold">Todo dia, 7h · o agente age sozinho nos pedidos, sem esperar aprovação</div>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                      <li>Troca a transportadora dos pedidos novos quando outra entrega melhor na região e o ganho paga o frete</li>
+                      <li>Cobra a transportadora nos pedidos parados há 3+ dias (até 80 por dia, os mais urgentes primeiro)</li>
+                      <li>Acompanha as respostas: reabre chamado sem resposta e aciona o financeiro se o pedido extraviou</li>
+                    </ul>
+                  </div>
                   <h2 className="font-semibold">Pedidos de ontem ({ONTEM.split("-").reverse().slice(0, 2).join("/")}): o que fazer agora</h2>
                   <p className="text-xs text-slate-500">O agente passou pelos pedidos de ontem e pelos que estão parados e age sozinho: troca a transportadora antes do despacho e abre a cobrança no portal da transportadora. Você só acompanha.</p>
                 </div>
@@ -559,13 +577,13 @@ function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof pl
     return { n: xs.length, valor: xs.reduce((a, x) => a + x.valorLiquido, 0), atrasos: xs.reduce((a, x) => a + x.atrasosEvitados, 0), cancel: xs.reduce((a, x) => a + x.cancelamentosEvitados, 0) };
   };
   const linhas = [
-    { t: "Prometer menos dias onde a entrega sobra", d: "recupera vendas perdidas para a concorrência", tipo: "pontual", ...grupo((x) => x.acao === "menos_margem") },
-    { t: "Cobrar a transportadora que falha (+1 dia de folga)", d: "menos atrasos, cancelamentos e reclamações", tipo: "recorrente", ...grupo((x) => x.acao === "incidente") },
-    { t: "Prometer mais dias onde atrasa e compensa", d: "menos atrasos sem perder venda", tipo: "recorrente", ...grupo((x) => x.acao === "mais_margem") },
-    { t: "Trocar a transportadora padrão da região", d: "entrega melhor e prazo menor", tipo: "recorrente", ...grupo((x) => x.acao === "rotear") },
-    { t: "Trocar a transportadora pedido a pedido (automático)", d: `${rota.roteados.length} de ${int(rota.analisados)} pedidos novos em 3 dias; ganho de prazo descontado pelo teste fora da amostra (${Math.round(rota.fatorTeste * 100)}% do previsto) + frete mais barato ${brl(rota.economiaFreteAno)}/ano`, tipo: "recorrente",
+    { cad: "semana", t: "Prometer menos dias onde a entrega sobra", d: "recupera vendas perdidas para a concorrência", tipo: "pontual", ...grupo((x) => x.acao === "menos_margem") },
+    { cad: "semana", t: "Cobrar a transportadora que falha (+1 dia de folga)", d: "menos atrasos, cancelamentos e reclamações", tipo: "recorrente", ...grupo((x) => x.acao === "incidente") },
+    { cad: "semana", t: "Prometer mais dias onde atrasa e compensa", d: "menos atrasos sem perder venda", tipo: "recorrente", ...grupo((x) => x.acao === "mais_margem") },
+    { cad: "semana", t: "Trocar a transportadora padrão da região", d: "entrega melhor e prazo menor", tipo: "recorrente", ...grupo((x) => x.acao === "rotear") },
+    { cad: "dia", t: "Trocar a transportadora pedido a pedido (automático)", d: `${rota.roteados.length} de ${int(rota.analisados)} pedidos novos em 3 dias; ganho de prazo descontado pelo teste fora da amostra (${Math.round(rota.fatorTeste * 100)}% do previsto) + frete mais barato ${brl(rota.economiaFreteAno)}/ano`, tipo: "recorrente",
       n: new Set(rota.roteados.map((r) => r.p3)).size, valor: rota.valorAno, atrasos: rota.atrasosEvitadosAno, cancel: 0 },
-    { t: "Multa de atraso prevista nos contratos", d: "cobrança que hoje não é feita", tipo: "recorrente", n: 5, valor: multa, atrasos: 0, cancel: 0 },
+    { cad: "quinzena", t: "Multa de atraso prevista nos contratos", d: "cobrança que hoje não é feita", tipo: "recorrente", n: 5, valor: multa, atrasos: 0, cancel: 0 },
   ];
   const total = linhas.reduce((a, l) => a + l.valor, 0);
   const tk = plano.tiktok;
@@ -590,14 +608,23 @@ function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof pl
         <table className="num mt-2 w-full text-sm">
           <thead className="text-left text-xs text-slate-500"><tr><th className="py-1">Ação</th><th>Regiões</th><th className="text-right">Atrasos evitados/ano</th><th className="text-right">Valor/ano</th></tr></thead>
           <tbody>
-            {linhas.map((l) => (
+            {([["dia", "Todo dia · pedidos (automático)"], ["semana", "Toda semana · regiões (gerente aprova)"], ["quinzena", "A cada fatura quinzenal · contratos"]] as const).flatMap(([cad, titulo]) => {
+              const ls = linhas.filter((l) => l.cad === cad);
+              return [
+                <tr key={cad} className="border-t border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                  <td className="py-1.5 pl-1">{titulo}</td><td></td><td></td>
+                  <td className="text-right text-emerald-700">{brl(ls.reduce((a, l) => a + l.valor, 0))}/ano</td>
+                </tr>,
+                ...ls.map((l) => (
               <tr key={l.t} className="border-t border-slate-100 align-top">
                 <td className="py-2"><div>{l.t}</div><div className="text-[11px] text-slate-400">{l.d} · {l.tipo}</div></td>
                 <td>{l.n || "—"}</td>
                 <td className="text-right">{l.atrasos ? int(l.atrasos) : "—"}</td>
                 <td className={`text-right font-medium ${l.valor >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{brl(l.valor)}</td>
               </tr>
-            ))}
+                )),
+              ];
+            })}
             <tr className="border-t-2 border-slate-300 font-semibold">
               <td className="py-2">Total</td><td>{new Set([...sel.map((x) => x.p3), ...rota.roteados.map((r) => r.p3)]).size}</td>
               <td className="text-right">{int(linhas.reduce((a, l) => a + l.atrasos, 0))}</td>
