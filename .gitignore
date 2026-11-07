@@ -48,3 +48,8 @@ next-env.d.ts
 
 # instruções do assistente (ficam só local)
 /CLAUDE.md
+
+# anotações pessoais (ficam só local)
+/notas.md
+/acoes.md
+/projeto.md
