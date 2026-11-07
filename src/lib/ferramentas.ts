@@ -4,9 +4,12 @@ import dadosJson from "@/data/radar.json";
 import {
   type Dados, type AcaoPrefixo, planoAcoes, resumir, recomendada, ehAcaoReal, custo, comMargem, fatorAno,
   noPrazo, total, valorMedio, faixasResumo, efeitoConversao, ROTULO_ACAO,
+  type Torre, type Roteamento, veredito, ROTULO_VEREDITO, rotearNaoPostados,
 } from "@/lib/radar";
 
-export const dados = dadosJson as unknown as Dados;
+export const dados = dadosJson as unknown as Dados & { torre: Torre };
+export const CUSTO_APROVACAO = 15; // R$ por aprovação do gerente (politicas.csv)
+export const MAX_CHAMADOS_DIA = 80;
 
 const r0 = (x: number) => Math.round(x);
 const pct = (x: number) => Math.round(x * 1000) / 10;
@@ -19,7 +22,7 @@ export type Proposta = {
 };
 
 const linha = (x: AcaoPrefixo) => ({
-  prefixo: x.p3, cidade: x.cidade, uf: x.uf, acao: ROTULO_ACAO[x.acao],
+  prefixo: x.p3, cidade: x.cidade, uf: x.uf, veredito: ROTULO_VEREDITO[veredito(x)], acao: ROTULO_ACAO[x.acao],
   margem: `${x.margemAtual} -> ${x.margemNova}`, prazo_exibido: `${x.prazoAtual} -> ${x.prazoNovo}`,
   transportadora: x.transportadoraNova ? `${x.transportadoraAtual} -> ${x.transportadoraNova}` : x.transportadoraAtual,
   concorrentes_prazo_mediana: x.concorrentes,
@@ -85,13 +88,40 @@ export const DEFINICOES = [
       },
     },
   },
+  {
+    type: "function", function: {
+      name: "torre_de_controle",
+      description: "Fila de hoje por envio (amostra): envios em trânsito parados há 3+ dias úteis (vencidos e a vencer), envios novos ainda não postados e multa contratual de atraso devida por cada transportadora.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "abrir_chamados_portal",
+      description: "Abre chamado no portal da transportadora para envios parados (decide sozinho, máx. 80 por dia). Sem lista, pega os mais urgentes (prazo mais próximo, mais dias parado).",
+      parameters: {
+        type: "object",
+        properties: { envios: { type: "array", items: { type: "string" }, description: "ids ENV...; opcional" }, quantidade: { type: "integer", minimum: 1, maximum: 80 } },
+      },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "rotear_envios_novos",
+      description: "Roteia os envios novos ainda não postados para a transportadora que atende a região e cumpre mais no prefixo (ganho ≥5 p.p., máx. 40% dos envios da UF no dia). Decide sozinho.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ] as const;
 
 export function criarExecutor(ctx: Contexto) {
   const plano = planoAcoes(dados, ctx.meta, ctx.sensibilidade);
   const porP3 = new Map(plano.prefixos.map((x) => [x.p3, x]));
   const propostas: Proposta[] = [];
+  const chamados: { id: string; transportadora: string; cod: string; motivo: string }[] = [];
+  let roteamento: Roteamento[] = [];
   const fator = fatorAno(dados);
+  const torre = dados.torre;
 
   const ferramentas: Record<string, (a: Record<string, unknown>) => unknown> = {
     resumo_geral: () => {
@@ -102,7 +132,36 @@ export function criarExecutor(ctx: Contexto) {
         potencial_plano_completo: { prefixos: pot.prefixos, no_prazo_pct: pct(pot.noPrazoDepois), atrasos_evitados_ano: r0(pot.atrasosEvitados), cancelamentos_evitados_ano: r0(pot.cancelamentosEvitados), economia_atrasos_rs_ano: r0(pot.economiaTotal), efeito_conversao_rs_ano: r0(pot.conversao), valor_liquido_rs_ano: r0(pot.valorLiquido) },
         recomendado_saldo_positivo: { prefixos: rec.prefixos, no_prazo_pct: pct(rec.noPrazoDepois), atrasos_evitados_ano: r0(rec.atrasosEvitados), cancelamentos_evitados_ano: r0(rec.cancelamentosEvitados), economia_atrasos_rs_ano: r0(rec.economiaTotal), efeito_conversao_rs_ano: r0(rec.conversao), valor_liquido_rs_ano: r0(rec.valorLiquido) },
         acoes: plano.contagem,
+        vereditos_154_prefixos: plano.prefixos.reduce((c, x) => { const v = ROTULO_VEREDITO[veredito(x)]; c[v] = (c[v] ?? 0) + 1; return c; }, {} as Record<string, number>),
       };
+    },
+    torre_de_controle: () => ({
+      observacao: "listas da amostra de envios (1 em cada 6); multa já anualizada",
+      envios_parados: { total: torre.emRisco.length, vencidos: torre.emRisco.filter((e) => e.vencido).length, a_vencer: torre.emRisco.filter((e) => !e.vencido).length,
+        por_transportadora: torre.emRisco.reduce((c, e) => { c[e.t] = (c[e.t] ?? 0) + 1; return c; }, {} as Record<string, number>),
+        mais_urgentes: torre.emRisco.slice(0, 5).map((e) => ({ envio: e.id, prefixo: e.p3, transportadora: e.t, ultimo_evento: e.ultimoEvento, parado_dias_uteis: e.paradoDiasUteis, prometida: e.prometida })) },
+      envios_novos_nao_postados: torre.naoPostados.length,
+      multa_contratual_por_transportadora: torre.multaTransportadoras.map((m) => ({ transportadora: m.transportadora, no_prazo_pct: pct(m.noPrazoEntregues), meta_contrato_pct: pct(m.metaContrato), atrasados_ano: m.atrasadosAno, multa_devida_rs_ano: m.multaDevidaAno })),
+      multa_total_rs_ano: torre.multaTransportadoras.reduce((s, m) => s + m.multaDevidaAno, 0),
+      chamados_abertos_hoje: chamados.length, limite_chamados_dia: MAX_CHAMADOS_DIA,
+    }),
+    abrir_chamados_portal: (a) => {
+      const pedidos = Array.isArray(a.envios) && a.envios.length ? new Set(a.envios.map(String)) : null;
+      const ja = new Set(chamados.map((c) => c.id));
+      const livres = MAX_CHAMADOS_DIA - chamados.length;
+      if (livres <= 0) return { erro: "limite de 80 chamados por dia atingido" };
+      const qtd = Math.min(livres, Number(a.quantidade ?? livres));
+      const alvo = torre.emRisco.filter((e) => !ja.has(e.id) && (!pedidos || pedidos.has(e.id))).slice(0, qtd);
+      for (const e of alvo) chamados.push({ id: e.id, transportadora: e.t, cod: e.cod, motivo: e.vencido ? `atraso: prazo ${e.prometida} vencido, sem evento há ${e.paradoDiasUteis} dias úteis (${e.ultimoEvento})` : `rastreio parado há ${e.paradoDiasUteis} dias úteis, prazo ${e.prometida} (${e.ultimoEvento})` });
+      return { ok: true, abertos_agora: alvo.length, total_hoje: chamados.length, restam_no_dia: MAX_CHAMADOS_DIA - chamados.length,
+        por_transportadora: alvo.reduce((c, e) => { c[e.t] = (c[e.t] ?? 0) + 1; return c; }, {} as Record<string, number>), resposta_prevista: "4 a 24 h" };
+    },
+    rotear_envios_novos: () => {
+      const r = rotearNaoPostados(dados);
+      roteamento = r.roteados;
+      const pares = r.roteados.reduce((c, x) => { const k = `${x.de} -> ${x.para}`; c[k] = (c[k] ?? 0) + 1; return c; }, {} as Record<string, number>);
+      return { ok: true, envios_analisados: r.analisados, roteados: r.roteados.length, barrados_pelo_limite_40pct_uf_dia: r.bloqueadosLimite,
+        trocas: pares, atrasos_esperados_evitados_na_fila: Math.round(r.atrasosEvitadosFila * 10) / 10, frete_extra_rs_na_fila: Math.round(r.freteExtraFila) };
     },
     listar_prefixos: (a) => {
       const lim = Math.min(15, Number(a.limite ?? 10)); // limite menor = menos tokens e agente mais rápido
@@ -149,15 +208,22 @@ export function criarExecutor(ctx: Contexto) {
       const ja = new Set(propostas.flatMap((p) => p.prefixos));
       if (xs.some((x) => ja.has(x.p3))) return { erro: "algum desses prefixos já está em outra proposta" };
       const x0 = xs[0];
+      if (x0.acao === "incidente") {
+        // política: incidente é por transportadora, com evidência por prefixo, no máximo 2 abertos por transportadora
+        const ts = new Set(xs.map((x) => x.transportadoraAtual));
+        if (ts.size > 1) return { erro: `incidente é por transportadora; estes prefixos têm ${[...ts].join(", ")}. Faça um incidente por transportadora.` };
+        const abertos = propostas.filter((p) => p.tipo === ROTULO_ACAO.incidente && p.mudanca.includes(String(x0.transportadoraAtual))).length;
+        if (abertos >= 2) return { erro: `já há 2 incidentes abertos com ${x0.transportadoraAtual} (limite da política)` };
+      }
       const mudanca = x0.acao === "rotear" ? `rotear de ${x0.transportadoraAtual} para ${x0.transportadoraNova}`
-        : x0.acao === "incidente" ? `abrir incidente com a transportadora e ajustar margem ${x0.margemAtual}→${x0.margemNova}`
+        : x0.acao === "incidente" ? `incidente com ${x0.transportadoraAtual} (meta de contrato 95%) e margem ${x0.margemAtual}→${x0.margemNova}`
         : `prazo exibido ${x0.prazoAtual}→${x0.prazoNovo} dias úteis (margem ${x0.margemAtual}→${x0.margemNova})`;
       const soma = (k: "valorLiquido" | "atrasosEvitados" | "cancelamentosEvitados") => r0(xs.reduce((s, x) => s + x[k], 0));
       const env = xs.reduce((s, x) => s + x.antes.envios, 0);
       const p: Proposta = {
         id: `P${propostas.length + 1}`, prefixos: xs.map((x) => x.p3), regiao: String(a.regiao ?? x0.cidade).slice(0, 60),
         tipo: ROTULO_ACAO[x0.acao], mudanca: xs.length > 1 ? mudanca.replace(/^prazo exibido \d+→\d+ dias úteis/, `prazo exibido ${x0.margemNova > x0.margemAtual ? "+" : "−"}${Math.abs(x0.margemNova - x0.margemAtual)} dia(s)`) : mudanca,
-        justificativa: String(a.justificativa ?? "").slice(0, 400), valorLiquidoAno: soma("valorLiquido"),
+        justificativa: String(a.justificativa ?? "").slice(0, 400), valorLiquidoAno: soma("valorLiquido") - CUSTO_APROVACAO,
         atrasosEvitadosAno: soma("atrasosEvitados"), cancelamentosEvitadosAno: soma("cancelamentosEvitados"),
         noPrazoAntes: xs.reduce((s, x) => s + x.noPrazoAntes * x.antes.envios, 0) / env,
         noPrazoDepois: xs.reduce((s, x) => s + x.noPrazoDepois * x.antes.envios, 0) / env, status: "aguardando_gerente",
@@ -169,7 +235,8 @@ export function criarExecutor(ctx: Contexto) {
   };
 
   return {
-    propostas,
+    propostas, chamados,
+    get roteamento() { return roteamento; },
     executar(nome: string, args: Record<string, unknown>) {
       const f = ferramentas[nome];
       if (!f) return { erro: `ferramenta desconhecida: ${nome}` };

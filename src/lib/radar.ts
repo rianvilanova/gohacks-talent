@@ -302,3 +302,62 @@ export const ROTULO_ACAO: Record<Acao, string> = {
 export const faixasResumo = (c: Custo) => Object.fromEntries(
   Object.entries(c.porFaixa).map(([k, v]) => [k, { atrasos: Math.round(v.atrasos), cancelamentos: Math.round(v.cancelamentos) }]),
 );
+
+// ======================= Veredito (todo prefixo recebe um) e torre por envio =======================
+
+export type Veredito = "saudavel" | "prazo_curto" | "prazo_sobrando" | "transportadora_falhando" | "transportadora_melhor" | "monitorar" | "poucos_dados";
+export const ROTULO_VEREDITO: Record<Veredito, string> = {
+  saudavel: "Saudável", prazo_sobrando: "Prazo sobrando", prazo_curto: "Prazo curto",
+  transportadora_falhando: "Transportadora falhando", transportadora_melhor: "Há transportadora melhor",
+  monitorar: "Abaixo da meta, mexer não compensa", poucos_dados: "Poucos dados",
+};
+/** Diagnóstico de todo prefixo. Só vira ação quando a ação é recomendada (saldo positivo). */
+export function veredito(x: AcaoPrefixo): Veredito {
+  if (x.acao === "sem_dados") return "poucos_dados";
+  if (recomendada(x)) {
+    if (x.acao === "menos_margem") return "prazo_sobrando";
+    if (x.acao === "mais_margem") return "prazo_curto";
+    if (x.acao === "incidente") return "transportadora_falhando";
+    if (x.acao === "rotear") return "transportadora_melhor";
+  }
+  return x.noPrazoAntes >= PARAMS.metaPorPrefixo ? "saudavel" : "monitorar";
+}
+
+export type EnvioRisco = { id: string; p3: string; uf: string; t: string; cod: string; ultimoEvento: string; ultimoEm: string; paradoDiasUteis: number; prometida: string; vencido: boolean; valor: number };
+export type MultaTransp = { transportadora: string; metaContrato: number; multaPctDia: number; tetoPct: number; noPrazoEntregues: number; atrasadosAno: number; multaDevidaAno: number };
+export type Torre = { naoPostados: [string, string, string, string, number, string][]; emRisco: EnvioRisco[]; multaTransportadoras: MultaTransp[] };
+
+export type Roteamento = { id: string; p3: string; uf: string; de: string; para: string; noPrazoDe: number; noPrazoPara: number; freteExtra: number };
+
+/**
+ * rotear_envio para os envios ainda não postados: troca para a transportadora que atende a região
+ * e cumpre mais no prefixo (histórico do treino, ≥20 envios, ganho ≥5 p.p.), no máximo 40% dos envios da UF no dia.
+ */
+export function rotearNaoPostados(d: Dados & { torre: Torre }) {
+  const porP3 = new Map(d.prefixos.map((p) => [p.p3, p]));
+  const taxa = (h: Hist, m: number) => noPrazo(comMargem(h, m));
+  const totalUfDia = new Map<string, number>(), usadoUfDia = new Map<string, number>();
+  for (const [, , uf, , , dia] of d.torre.naoPostados) totalUfDia.set(uf + dia, (totalUfDia.get(uf + dia) ?? 0) + 1);
+  const roteados: Roteamento[] = [];
+  let analisados = 0, bloqueadosLimite = 0;
+  for (const [id, p3, uf, t, , dia] of d.torre.naoPostados) {
+    const p = porP3.get(p3); if (!p || !p.regra) continue;
+    analisados++;
+    const m = p.regra.margem, atende = new Set(p.atende.map((a) => a.transportadora));
+    const atual = p.transp[t] && total(p.transp[t].base.treino) >= 20 ? taxa(p.transp[t].base.treino, m) : taxa(p.base.treino, m);
+    let melhor: { t: string; r: number } | null = null;
+    for (const [tt, T] of Object.entries(p.transp)) {
+      if (tt === t || !atende.has(tt) || total(T.base.treino) < 20) continue;
+      const r = taxa(T.base.treino, m);
+      if (r - atual >= 0.05 && (!melhor || r > melhor.r)) melhor = { t: tt, r };
+    }
+    if (!melhor) continue;
+    const k = uf + dia, usado = usadoUfDia.get(k) ?? 0;
+    if (usado + 1 > 0.4 * (totalUfDia.get(k) ?? 0)) { bloqueadosLimite++; continue; }
+    usadoUfDia.set(k, usado + 1);
+    const fd = p.fretePorTransp[t], fp = p.fretePorTransp[melhor.t];
+    roteados.push({ id, p3, uf, de: t, para: melhor.t, noPrazoDe: atual, noPrazoPara: melhor.r, freteExtra: fd && fp ? fp - fd : 0 });
+  }
+  const atrasosEvitadosFila = roteados.reduce((s, r) => s + (r.noPrazoPara - r.noPrazoDe), 0);
+  return { analisados, roteados, bloqueadosLimite, atrasosEvitadosFila, freteExtraFila: roteados.reduce((s, r) => s + r.freteExtra, 0) };
+}

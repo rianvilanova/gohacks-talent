@@ -3,11 +3,19 @@
 import { useMemo, useRef, useState } from "react";
 import dadosJson from "@/data/radar.json";
 import {
-  type Dados, type Acao, type AcaoPrefixo, planoAcoes, resumir, recomendada, ehAcaoReal, FAIXAS, ROTULO_ACAO,
+  type Dados, type Acao, type AcaoPrefixo, type Torre, type Roteamento, type Veredito, planoAcoes, resumir, recomendada, ehAcaoReal,
+  FAIXAS, ROTULO_ACAO, ROTULO_VEREDITO, veredito, rotearNaoPostados,
 } from "@/lib/radar";
 import type { Proposta } from "@/lib/ferramentas";
 
-const dados = dadosJson as unknown as Dados;
+const dados = dadosJson as unknown as Dados & { torre: Torre };
+const COR_VEREDITO: Record<Veredito, string> = {
+  saudavel: "bg-emerald-50 text-emerald-700 border-emerald-200", prazo_sobrando: "bg-sky-50 text-sky-700 border-sky-200",
+  prazo_curto: "bg-amber-50 text-amber-700 border-amber-200", transportadora_falhando: "bg-rose-50 text-rose-700 border-rose-200",
+  transportadora_melhor: "bg-violet-50 text-violet-700 border-violet-200", poucos_dados: "bg-slate-50 text-slate-500 border-slate-200",
+  monitorar: "bg-orange-50 text-orange-700 border-orange-200",
+};
+type Chamado = { id: string; transportadora: string; cod: string; motivo: string };
 
 // ---------- formatação ----------
 const int = (x: number) => Math.round(x).toLocaleString("pt-BR");
@@ -31,7 +39,7 @@ const COR_ACAO: Record<Acao, string> = {
 type Evento =
   | { tipo: "ferramenta"; nome: string; args: Record<string, unknown>; resultado: unknown }
   | { tipo: "pensamento" | "final" | "erro"; texto: string }
-  | { tipo: "fim"; propostas: Proposta[]; uso: { modelo: string; tokensEntrada: number; tokensSaida: number } };
+  | { tipo: "fim"; propostas: Proposta[]; chamados?: Chamado[]; roteamento?: Roteamento[]; uso: { modelo: string; tokensEntrada: number; tokensSaida: number } };
 
 function rotuloFerramenta(e: Extract<Evento, { tipo: "ferramenta" }>) {
   const a = e.args;
@@ -40,6 +48,9 @@ function rotuloFerramenta(e: Extract<Evento, { tipo: "ferramenta" }>) {
     case "listar_prefixos": return `Listou prefixos por ${a.ordem === "pior_prazo" ? "pior prazo" : a.ordem === "prejuizo" ? "ações que dariam prejuízo" : "valor"}${a.acao ? ` (${ROTULO_ACAO[a.acao as Acao]})` : ""}`;
     case "diagnosticar_prefixo": return `Diagnosticou o prefixo ${a.prefixo}`;
     case "simular_margem": return `Simulou margem de ${a.margem} dia(s) no prefixo ${a.prefixo}`;
+    case "torre_de_controle": return "Abriu a torre de controle: envios parados, envios novos e multa";
+    case "abrir_chamados_portal": { const r = e.resultado as { abertos_agora?: number }; return `Abriu ${r?.abertos_agora ?? 0} chamados nos portais das transportadoras`; }
+    case "rotear_envios_novos": { const r = e.resultado as { roteados?: number; envios_analisados?: number }; return `Roteou ${r?.roteados ?? 0} de ${r?.envios_analisados ?? 0} envios novos`; }
     case "propor_mudanca": return `Abriu proposta: ${a.regiao ?? ""} (${(a.prefixos as string[] | undefined)?.join(", ")})`;
     default: return e.nome;
   }
@@ -72,12 +83,14 @@ export default function Painel() {
   const [propostas, setPropostas] = useState<Proposta[]>([]);
   const [decisoes, setDecisoes] = useState<Record<string, "aprovada" | "recusada">>({});
   const [uso, setUso] = useState<string>("");
+  const [chamados, setChamados] = useState<Chamado[]>([]);
+  const [roteados, setRoteados] = useState<Roteamento[] | null>(null);
   const [pergunta, setPergunta] = useState("");
   const fimRef = useRef<HTMLDivElement>(null);
 
   async function rodarAgente(textoPergunta?: string) {
     setRodando(true); setEventos([]); setUso("");
-    if (!textoPergunta) { setPropostas([]); setDecisoes({}); }
+    if (!textoPergunta) { setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); }
     try {
       const r = await fetch("/api/agente", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -99,6 +112,8 @@ export default function Painel() {
           const ev = JSON.parse(l) as Evento;
           if (ev.tipo === "fim") {
             if (ev.propostas.length) setPropostas(ev.propostas);
+            if (ev.chamados?.length) setChamados(ev.chamados);
+            if (ev.roteamento?.length) setRoteados(ev.roteamento);
             setUso(`${ev.uso.modelo} · entrada ${int(ev.uso.tokensEntrada)} tok · saída ${int(ev.uso.tokensSaida)} tok`);
           } else setEventos((x) => [...x, ev]);
           setTimeout(() => fimRef.current?.scrollIntoView({ block: "nearest" }), 50);
@@ -119,6 +134,12 @@ export default function Painel() {
     else if (filtro !== "todas") l = l.filter((x) => x.acao === filtro);
     return l;
   }, [plano, filtro]);
+
+  const torre = dados.torre;
+  const previaRota = useMemo(() => rotearNaoPostados(dados), []);
+  const multaTotal = torre.multaTransportadoras.reduce((s, m) => s + m.multaDevidaAno, 0);
+  const vereditos = useMemo(() => plano.prefixos.reduce((c, x) => { const v = veredito(x); c[v] = (c[v] ?? 0) + 1; return c; }, {} as Record<Veredito, number>), [plano]);
+  const comChamado = new Set(chamados.map((c) => c.id));
 
   const faixasHoje = plano.antes.porFaixa, faixasPot = plano.depois.porFaixa;
   const maxFaixa = Math.max(...FAIXAS.map((f) => faixasHoje[f.id].atrasos));
@@ -152,6 +173,70 @@ export default function Painel() {
       <div className="mt-6 grid gap-6 lg:grid-cols-5">
         {/* coluna esquerda: faixas + prefixos */}
         <div className="space-y-6 lg:col-span-3">
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <h2 className="font-semibold">Veredito dos 154 prefixos</h2>
+            <p className="text-xs text-slate-500">Todo prefixo é analisado; só os que precisam de mudança viram proposta.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(Object.keys(ROTULO_VEREDITO) as Veredito[]).map((v) => (
+                <div key={v} className={`rounded-lg border px-3 py-2 ${COR_VEREDITO[v]}`}>
+                  <div className="num text-xl font-semibold">{vereditos[v] ?? 0}</div>
+                  <div className="text-xs">{ROTULO_VEREDITO[v]}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <h2 className="font-semibold">Torre de controle: envios de hoje</h2>
+            <p className="text-xs text-slate-500">O agente decide sozinho aqui: abre chamados e roteia envios novos. Listas da amostra (1 em cada 6 envios); multa anualizada.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Envios parados 3+ dias úteis</div>
+                <div className="num text-xl font-semibold">{int(torre.emRisco.length)}</div>
+                <div className="text-xs text-slate-500">{int(torre.emRisco.filter((e) => e.vencido).length)} já vencidos · {int(torre.emRisco.filter((e) => !e.vencido).length)} a vencer</div>
+                <div className="mt-1 text-xs font-medium text-emerald-700">{chamados.length ? `${chamados.length} chamados abertos pelo agente` : "chamados: rode a varredura (máx. 80/dia)"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Envios novos não postados</div>
+                <div className="num text-xl font-semibold">{int(torre.naoPostados.length)}</div>
+                <div className="text-xs text-slate-500">{int(previaRota.roteados.length)} podem ir para transportadora melhor (≥5 p.p., máx. 40%/UF/dia)</div>
+                <div className="mt-1 text-xs font-medium text-emerald-700">{roteados ? `${roteados.length} roteados pelo agente` : "rota: rode a varredura"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Multa de atraso a cobrar</div>
+                <div className="num text-xl font-semibold">{brl(multaTotal)}<span className="text-xs font-normal">/ano</span></div>
+                <div className="text-xs text-slate-500">contratos: 1–2% do frete por dia útil de atraso</div>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-4 lg:grid-cols-2">
+              <div>
+                <div className="text-xs font-medium text-slate-600">Mais urgentes</div>
+                <ul className="num mt-1 space-y-1 text-xs">
+                  {torre.emRisco.slice(0, 6).map((e) => (
+                    <li key={e.id} className="flex justify-between gap-2 border-t border-slate-100 pt-1">
+                      <span><b>{e.p3}</b> {e.t} · {e.ultimoEvento.toLowerCase().slice(0, 32)} · parado {e.paradoDiasUteis}d</span>
+                      <span className={comChamado.has(e.id) ? "text-emerald-700" : e.vencido ? "text-rose-700" : "text-amber-700"}>{comChamado.has(e.id) ? "chamado aberto" : e.vencido ? "vencido" : `vence ${e.prometida.slice(8, 10)}/${e.prometida.slice(5, 7)}`}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-slate-600">Cumprimento × contrato (meta 95%)</div>
+                <table className="num mt-1 w-full text-xs">
+                  <tbody>
+                    {torre.multaTransportadoras.map((m) => (
+                      <tr key={m.transportadora} className="border-t border-slate-100">
+                        <td className="py-1">{m.transportadora}</td>
+                        <td className={m.noPrazoEntregues < m.metaContrato ? "text-rose-700" : "text-emerald-700"}>{pct(m.noPrazoEntregues)}</td>
+                        <td className="text-right">{brl(m.multaDevidaAno)}/ano</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="font-semibold">Atrasos por faixa, por ano</h2>
             <p className="text-xs text-slate-500">Hoje × com o plano completo na meta. Chance de cancelar e de contato: data/transportes/parametros.md</p>
@@ -203,7 +288,7 @@ export default function Painel() {
             <div className="mt-3 max-h-[520px] overflow-auto">
               <table className="num w-full text-sm">
                 <thead className="sticky top-0 bg-white text-left text-xs text-slate-500">
-                  <tr><th className="py-1">Prefixo</th><th>Ação</th><th>Prazo</th><th>No prazo</th><th className="text-right">Atrasos evitados</th><th className="text-right">Valor/ano</th></tr>
+                  <tr><th className="py-1">Prefixo</th><th>Veredito</th><th>Ação</th><th>Prazo</th><th>No prazo</th><th className="text-right">Atrasos evitados</th><th className="text-right">Valor/ano</th></tr>
                 </thead>
                 <tbody>
                   {lista.map((x) => <LinhaPrefixo key={x.p3} x={x} aberto={aberto === x.p3} onClick={() => setAberto(aberto === x.p3 ? null : x.p3)} />)}
@@ -266,7 +351,7 @@ export default function Painel() {
                     <div className="num text-right font-semibold text-emerald-700">{brl(p.valorLiquidoAno)}<span className="text-xs font-normal">/ano</span></div>
                   </div>
                   <div className="mt-1">{p.mudanca}</div>
-                  <div className="num mt-1 text-xs text-slate-500">No prazo {pct(p.noPrazoAntes)} → {pct(p.noPrazoDepois)} · −{int(p.atrasosEvitadosAno)} atrasos · −{int(p.cancelamentosEvitadosAno)} cancelamentos/ano</div>
+                  <div className="num mt-1 text-xs text-slate-500">No prazo {pct(p.noPrazoAntes)} → {pct(p.noPrazoDepois)} · {p.atrasosEvitadosAno >= 0 ? `−${int(p.atrasosEvitadosAno)}` : `+${int(-p.atrasosEvitadosAno)}`} atrasos · {p.cancelamentosEvitadosAno >= 0 ? `−${int(p.cancelamentosEvitadosAno)}` : `+${int(-p.cancelamentosEvitadosAno)}`} cancelamentos/ano</div>
                   <div className="mt-1 text-xs italic text-slate-600">“{p.justificativa}”</div>
                   <div className="mt-2 flex gap-2">
                     {decisoes[p.id] ? (
@@ -322,6 +407,7 @@ function LinhaPrefixo({ x, aberto, onClick }: { x: AcaoPrefixo; aberto: boolean;
     <>
       <tr onClick={onClick} className="cursor-pointer border-t border-slate-100 hover:bg-slate-50">
         <td className="py-2"><b>{x.p3}</b> <span className="text-xs text-slate-500">{x.cidade}/{x.uf}</span></td>
+        <td><span className={`rounded border px-1.5 py-0.5 text-[11px] ${COR_VEREDITO[veredito(x)]}`}>{ROTULO_VEREDITO[veredito(x)]}</span></td>
         <td><span className={`rounded-full px-2 py-0.5 text-xs ${COR_ACAO[x.acao]}`}>{ROTULO_ACAO[x.acao]}</span></td>
         <td className="text-xs">{x.prazoAtual ?? "–"}{x.prazoNovo !== x.prazoAtual && <> → <b>{x.prazoNovo}</b></>} d</td>
         <td className="text-xs">{pct(x.noPrazoAntes)}{x.noPrazoDepois !== x.noPrazoAntes && <> → <b>{pct(x.noPrazoDepois)}</b></>}</td>
@@ -330,7 +416,7 @@ function LinhaPrefixo({ x, aberto, onClick }: { x: AcaoPrefixo; aberto: boolean;
       </tr>
       {aberto && (
         <tr className="bg-slate-50">
-          <td colSpan={6} className="px-2 py-3 text-xs text-slate-700">
+          <td colSpan={7} className="px-2 py-3 text-xs text-slate-700">
             <div className="grid gap-1 sm:grid-cols-2">
               <div>Transportadora: <b>{x.transportadoraAtual ?? "–"}</b>{x.transportadoraNova && <> → <b>{x.transportadoraNova}</b></>}</div>
               <div>Margem de segurança: {x.margemAtual} → <b>{x.margemNova}</b> dia(s) · concorrentes prometem {x.concorrentes ?? "?"} dias</div>

@@ -171,6 +171,53 @@ for (let g = GMIN; g <= GMAX; g++) {
 }
 console.log("curva de conversão (gap -> relativa ao gap 0):", JSON.stringify(curvaConversao));
 
+// ---------- 8. torre de controle por envio (a fila de hoje, 02/11) ----------
+// 8a. último evento de cada código em qualquer portal
+const ultimo = new Map(); // cod -> [data, evento, transportadora]
+const marcaUlt = (c, iso, ev, t) => { const k = norm(c); const u = ultimo.get(k); if (!u || iso >= u[0]) ultimo.set(k, [iso, ev, t]); };
+for (const r of lerCsv("portal_expressa_ja.csv")) marcaUlt(r.codigo_rastreio, r.data_hora.slice(0, 10), r.evento, "Expressa Já");
+for (const r of lerCsv("portal_transnorte.csv")) marcaUlt(r.rastreio, r.quando.slice(0, 10), r.status, "TransNorte");
+for (const r of lerCsv("portal_rapido_sul.csv", ";")) { const [dd, mm, yyyy] = r.data_hora.slice(0, 10).split("/"); marcaUlt(r.rastreio, `${yyyy}-${mm}-${dd}`, r.ocorrencia, "Rápido Sul"); }
+for (const r of lerCsv("portal_vialog.csv")) marcaUlt(r.awb, r.timestamp.slice(0, 10), codVialog[r.cod_status] ?? r.cod_status, "ViaLog");
+for (const r of lerCsv("portal_correio_agil.csv")) marcaUlt(r.objeto, new Date(new Date(r.data_hora_utc).getTime() - 3 * 3600e3).toISOString().slice(0, 10), r.descricao, "Correio Ágil");
+const FINAL = /devol|extrav|sinistro|baixa administrativa/i;
+
+// 8b. envios em trânsito parados há 3+ dias úteis (política: rastreio parado 3 dias -> chamado), prazo recente
+const emRisco = [];
+// 8c. envios novos ainda não postados (candidatos a rotear_envio)
+const naoPostados = [];
+for (const e of envios) {
+  const p3 = e.cep.slice(0, 3);
+  if (!e.data_postagem) { naoPostados.push([e.envio_id, p3, e.uf, e.transportadora, Number(e.valor_pedido), e.data_pedido.slice(0, 10)]); continue; }
+  const cod = norm(e.codigo_rastreio), u = ultimo.get(cod);
+  if (!u || entrega.has(cod) || FINAL.test(u[1])) continue;
+  const parado = diasUteisEntre(u[0], EXPORTACAO);
+  if (parado < 3 || e.data_prometida < "2026-10-19") continue; // mais antigos já viraram extravio/incidente
+  emRisco.push({ id: e.envio_id, p3, uf: e.uf, t: e.transportadora, cod: e.codigo_rastreio, ultimoEvento: u[1], ultimoEm: u[0], paradoDiasUteis: parado, prometida: e.data_prometida, vencido: e.data_prometida < EXPORTACAO, valor: Number(e.valor_pedido) });
+}
+emRisco.sort((a, b) => a.prometida.localeCompare(b.prometida) || b.paradoDiasUteis - a.paradoDiasUteis);
+
+// 8d. multa contratual de atraso devida por transportadora (contrato: % do frete por dia útil, com teto)
+const contrato = Object.fromEntries(lerCsv("transportadoras.csv").map((r) => [r.transportadora, { pct: Number(r.multa_atraso_pct_frete_por_dia_util) / 100, teto: Number(r.multa_atraso_teto_pct_frete) / 100, meta: Number(r.meta_cumprimento_sla_pct) / 100 }]));
+const freteCte = {};
+for (const c of lerCsv("ctes.csv")) freteCte[c.envio_id] = (freteCte[c.envio_id] ?? 0) + Number(c.valor_total);
+const multa = {}; let universo = 0;
+for (const e of envios) {
+  if (!(e.data_postagem >= PORTAL_INICIO && e.data_prometida < EXPORTACAO)) continue;
+  universo++;
+  const ent = entrega.get(norm(e.codigo_rastreio)), M = (multa[e.transportadora] ??= { envios: 0, atrasados: 0, multa: 0 });
+  M.envios++;
+  if (!ent || ent <= e.data_prometida) continue;
+  const c = contrato[e.transportadora], dias = diasUteisEntre(e.data_prometida, ent);
+  M.atrasados++; M.multa += Math.min(c.teto, c.pct * dias) * (freteCte[e.envio_id] ?? Number(e.custo_frete_cotado));
+}
+const fatorUniverso = Math.round((envios.length * 6 * 365) / 90) / universo;
+const multaTransportadoras = Object.entries(multa).map(([t, M]) => ({
+  transportadora: t, metaContrato: contrato[t].meta, multaPctDia: contrato[t].pct, tetoPct: contrato[t].teto,
+  noPrazoEntregues: 1 - M.atrasados / M.envios, atrasadosAno: Math.round(M.atrasados * fatorUniverso), multaDevidaAno: Math.round(M.multa * fatorUniverso),
+})).sort((a, b) => b.multaDevidaAno - a.multaDevidaAno);
+console.log(`torre: ${naoPostados.length} não postados | ${emRisco.length} em risco | multa/ano R$ ${multaTransportadoras.reduce((s, m) => s + m.multaDevidaAno, 0)}`);
+
 // ---------- saída ----------
 const prefixos = Object.entries(pref).map(([p3, P]) => {
   const cidade = Object.entries(P.cidades).sort((a, b) => b[1] - a[1])[0][0];
@@ -199,6 +246,7 @@ const saida = {
   janelaPortais: [PORTAL_INICIO, EXPORTACAO],
   enviosPorAno: Math.round((envios.length * 6 * 365) / 90), // amostra 1 em 6, 90 dias
   curvaConversao, geral, porTransp, prefixos,
+  torre: { naoPostados, emRisco, multaTransportadoras },
 };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(saida));
