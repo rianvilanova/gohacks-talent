@@ -5,7 +5,7 @@ import diaSeguinteJson from "@/data/dia_seguinte.json";
 import {
   type Dados, type AcaoPrefixo, planoAcoes, resumir, recomendada, ehAcaoReal, custo, comMargem, fatorAno,
   noPrazo, total, valorMedio, faixasResumo, efeitoConversao, ROTULO_ACAO,
-  type Torre, type Roteamento, veredito, ROTULO_VEREDITO, rotearNaoPostados,
+  type Torre, type Roteamento, veredito, ROTULO_VEREDITO, rotearNaoPostados, valorRoteamentoAno,
 } from "@/lib/radar";
 
 export const dados = dadosJson as unknown as Dados & { torre: Torre };
@@ -210,11 +210,12 @@ export function criarExecutor(ctx: Contexto) {
         por_transportadora: alvo.reduce((c, e) => { c[e.t] = (c[e.t] ?? 0) + 1; return c; }, {} as Record<string, number>), resposta_prevista: "4 a 24 h" };
     },
     rotear_envios_novos: () => {
-      const r = rotearNaoPostados(dados);
+      const r = valorRoteamentoAno(dados, plano);
       roteamento = r.roteados;
       const pares = r.roteados.reduce((c, x) => { const k = `${x.de} -> ${x.para}`; c[k] = (c[k] ?? 0) + 1; return c; }, {} as Record<string, number>);
       return { ok: true, envios_analisados: r.analisados, roteados: r.roteados.length, barrados_pelo_limite_40pct_uf_dia: r.bloqueadosLimite,
-        trocas: pares, atrasos_esperados_evitados_na_fila: Math.round(r.atrasosEvitadosFila * 10) / 10, frete_extra_rs_na_fila: Math.round(r.freteExtraFila) };
+        trocas: pares, atrasos_esperados_evitados_na_fila: Math.round(r.atrasosEvitadosFila * 10) / 10, frete_extra_rs_na_fila: Math.round(r.freteExtraFila),
+        estimativa_anual: { atrasos_evitados: r0(r.atrasosEvitadosAno), valor_rs: r0(r.valorAno), frete_rs: r0(r.freteAno), obs: "estimativa pelo histórico de cada transportadora na região; considera que a data prometida ao cliente foi calculada com o SLA da transportadora original" } };
     },
     novidades_do_dia: () => {
       if (dia !== 2) return { erro: "não há novidades: esta é a primeira varredura (02/11)" };

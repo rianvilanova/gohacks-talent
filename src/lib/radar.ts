@@ -215,6 +215,14 @@ function vizinhos(d: Dados, p: Prefixo): { treino: Hist; rotulo: string } | null
   return null;
 }
 
+/** SLA contratual (dias úteis) da transportadora t na região do prefixo (cobertura); prazo exibido = 1 + SLA + margem. */
+export function slaDe(p: Prefixo, t: string | null | undefined): number | null {
+  if (!t) return null;
+  const a = p.atende.find((x) => x.transportadora === t);
+  if (a) return a.sla;
+  return p.regra && p.regra.transportadora === t ? p.regra.sla : null;
+}
+
 export type EfeitoTiktok = {
   fatia: number; corte: number; regua: number;
   noPrazoLojaHoje: number; noPrazoLojaPlano: number;
@@ -254,6 +262,7 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1, usarTiktok 
     const enviosAno = total(p.teste) * fator, vm = valorMedio(p.teste);
     const antes = custo(p.teste, fator);
     let acao: Acao = "manter", m = cur, transpNova: string | null = null, hDepois = p.teste, freteExtra = 0;
+    let deltaPrazo: number | null = null; // mudança no prazo exibido (dias); só difere de m - cur quando troca de transportadora
     const poucos = total(p.base.treino) < PARAMS.minEnviosPrefixo;
     const viz = poucos && total(p.base.teste) > 0 ? vizinhos(d, p) : null;
     const treinoRef = viz ? viz.treino : p.base.treino;
@@ -264,16 +273,21 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1, usarTiktok 
       m = mm ?? cur + 1; // se nem +3 cumpre, o problema é a transportadora: +1 e incidente
       // rota: transportadora que atende, com histórico no prefixo, cumprindo com menos margem
       const atende = new Set(p.atende.map((a) => a.transportadora));
-      let melhor: { t: string; m: number } | null = null;
+      // prazo exibido = 1 + SLA da transportadora + margem: a troca vale se a PROMESSA total ficar menor para a mesma meta
+      const slaAtual = p.regra?.sla ?? 0;
+      let melhor: { t: string; m: number; promessa: number } | null = null;
       for (const [t, T] of Object.entries(viz ? {} : p.transp)) { // rota exige histórico próprio
         if (!atende.has(t) || t === p.regra?.transportadora) continue;
         if (total(T.base.treino) < 20 || total(T.base.teste) < 10) continue;
+        const slaT = slaDe(p, t); if (slaT === null) continue;
         const mt = margemParaMeta(T.base.treino, meta, cur + 3);
-        if (mt !== null && mt < m && (!melhor || mt < melhor.m)) melhor = { t, m: mt };
+        if (mt === null) continue;
+        const promessa = slaT + mt;
+        if (promessa < slaAtual + m && (!melhor || promessa < melhor.promessa)) melhor = { t, m: mt, promessa };
       }
       if (melhor) {
         const T = p.transp[melhor.t];
-        transpNova = melhor.t; m = melhor.m; acao = "rotear";
+        transpNova = melhor.t; m = melhor.m; acao = "rotear"; deltaPrazo = melhor.promessa - (slaAtual + cur);
         hDepois = comMargem(escala(T.base.teste, total(p.teste) / total(T.base.teste)), m);
         const fAtual = p.regra ? p.fretePorTransp[p.regra.transportadora] : undefined, fNovo = p.fretePorTransp[melhor.t];
         if (fAtual && fNovo) freteExtra = Math.max(0, fNovo - fAtual) * enviosAno;
@@ -283,13 +297,14 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1, usarTiktok 
     }
     const depois = custo(hDepois, fator);
     // conversão: curva medida no checkout (nosso prazo vs concorrentes)
-    const conversao = prazo !== null && m !== cur ? efeitoConversao(d, p, m - cur, enviosAno * fatiaSite, sensibilidade) : 0;
+    const dPrazo = deltaPrazo ?? (m - cur);
+    const conversao = prazo !== null && dPrazo !== 0 ? efeitoConversao(d, p, dPrazo, enviosAno * fatiaSite, sensibilidade) : 0;
     void vm;
     const economiaDireta = antes.direto - depois.direto, economiaTotal = antes.total - depois.total;
     hsAntes.push(p.teste); hsDepois.push(hDepois);
     lista.push({
       p3: p.p3, cidade: p.cidade, uf: p.uf, acao, margemAtual: cur, margemNova: m,
-      prazoAtual: prazo, prazoNovo: prazo === null ? null : prazo + (m - cur),
+      prazoAtual: prazo, prazoNovo: prazo === null ? null : prazo + dPrazo,
       transportadoraAtual: p.regra?.transportadora ?? null, transportadoraNova: transpNova,
       concorrentes: p.concorrentesPrazoMediana, enviosAno,
       noPrazoAntes: antes.noPrazo, noPrazoDepois: depois.noPrazo,
@@ -422,10 +437,13 @@ export function rotearNaoPostados(d: Dados & { torre: Torre }) {
     analisados++;
     const m = p.regra.margem, atende = new Set(p.atende.map((a) => a.transportadora));
     const atual = p.transp[t] && total(p.transp[t].base.treino) >= 20 ? taxa(p.transp[t].base.treino, m) : taxa(p.base.treino, m);
+    const sla0 = slaDe(p, t) ?? p.regra.sla;
     let melhor: { t: string; r: number } | null = null;
     for (const [tt, T] of Object.entries(p.transp)) {
       if (tt === t || !atende.has(tt) || total(T.base.treino) < 20) continue;
-      const r = taxa(T.base.treino, m);
+      const slaT = slaDe(p, tt); if (slaT === null) continue;
+      // o cliente já recebeu a data calculada com o SLA original: SLA maior na nova transportadora consome a margem
+      const r = taxa(T.base.treino, m + sla0 - slaT);
       if (r - atual >= 0.05 && (!melhor || r > melhor.r)) melhor = { t: tt, r };
     }
     if (!melhor) continue;
@@ -437,4 +455,16 @@ export function rotearNaoPostados(d: Dados & { torre: Torre }) {
   }
   const atrasosEvitadosFila = roteados.reduce((s, r) => s + (r.noPrazoPara - r.noPrazoDe), 0);
   return { analisados, roteados, bloqueadosLimite, atrasosEvitadosFila, freteExtraFila: roteados.reduce((s, r) => s + r.freteExtra, 0) };
+}
+
+/** Estimativa anual da rota por pedido (fila de ~3 dias da amostra 1/6), com o custo médio de um atraso no modelo. */
+export function valorRoteamentoAno(d: Dados & { torre: Torre }, plano: PlanoAcoes) {
+  const r = rotearNaoPostados(d);
+  const dias = new Set(d.torre.naoPostados.map((x) => x[5])).size || 1;
+  const fAno = (365 / dias) * 6;
+  const porAtraso = plano.antes.atrasos ? plano.antes.total / plano.antes.atrasos : 0;
+  return {
+    ...r, parcela: r.analisados ? r.roteados.length / r.analisados : 0,
+    atrasosEvitadosAno: r.atrasosEvitadosFila * fAno, valorAno: r.atrasosEvitadosFila * fAno * porAtraso, freteAno: r.freteExtraFila * fAno,
+  };
 }

@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import dadosJson from "@/data/radar.json";
 import {
   type Dados, type Acao, type AcaoPrefixo, type Torre, type Roteamento, type Veredito, planoAcoes, resumir, recomendada, ehAcaoReal,
-  FAIXAS, PARAMS, veredito, rotearNaoPostados,
+  FAIXAS, PARAMS, veredito, valorRoteamentoAno,
 } from "@/lib/radar";
 import type { Proposta, Acionamento } from "@/lib/ferramentas";
 import diaSeguinteJson from "@/data/dia_seguinte.json";
@@ -141,7 +141,7 @@ export default function Painel() {
   const situacoes = useMemo(() => plano.prefixos.reduce((c, x) => { const v = veredito(x); c[v] = (c[v] ?? 0) + 1; return c; }, {} as Record<Veredito, number>), [plano]);
   const lista = useMemo(() => (soAcao ? plano.prefixos.filter(recomendada) : plano.prefixos), [plano, soAcao]);
   const torre = dados.torre;
-  const previaRota = useMemo(() => rotearNaoPostados(dados), []);
+  const previaRota = useMemo(() => valorRoteamentoAno(dados, plano), [plano]);
   const multaTotal = torre.multaTransportadoras.reduce((s, m) => s + m.multaDevidaAno, 0);
   const comChamado = new Set(chamados.map((c) => c.id));
   const atrasadosDe100 = Math.round((1 - plano.antes.noPrazo) * 100);
@@ -281,7 +281,8 @@ export default function Painel() {
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-500">Pedidos novos a despachar</div>
                   <div className="num text-2xl font-semibold">{int(torre.naoPostados.length)}</div>
-                  <div className="mt-1 text-xs font-medium text-emerald-700">{roteados ? `Agente trocou a transportadora de ${roteados.length}` : `${previaRota.roteados.length} podem ir por transportadora melhor`}</div>
+                  <div className="mt-1 text-xs font-medium text-emerald-700">{roteados ? `Agente trocou a transportadora de ${roteados.length}` : `${previaRota.roteados.length} (${Math.round(previaRota.parcela * 100)}%) podem ir por transportadora melhor`}</div>
+                  <div className="mt-1 text-[11px] text-slate-500">≈ −{int(previaRota.atrasosEvitadosAno)} atrasos/ano · {brl(previaRota.valorAno)}/ano · frete {previaRota.freteAno <= 0 ? `${brl(-previaRota.freteAno)} mais barato` : `${brl(previaRota.freteAno)} mais caro`} (estimado)</div>
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-500">Multa de atraso a cobrar</div>
