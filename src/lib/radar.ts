@@ -193,7 +193,27 @@ export type AcaoPrefixo = {
   antes: Custo; depois: Custo;
   selecionada: boolean; // entra no plano recomendado
   peloTiktok: boolean; // entrou só para a loja passar da régua do TikTok Shop
+  estimadoPor: string | null; // poucos envios próprios: margem aprendida no histórico dos vizinhos (ex.: "PA interior · TransNorte · 5 prefixos")
 };
+
+/**
+ * Prefixo com poucos envios: soma o treino (sem margem) dos prefixos da mesma UF, localidade e transportadora padrão;
+ * se ainda faltar volume, só UF + transportadora. Só dados reais; o resultado continua medido no teste do próprio prefixo.
+ */
+function vizinhos(d: Dados, p: Prefixo): { treino: Hist; rotulo: string } | null {
+  if (!p.regra) return null;
+  const r = p.regra;
+  const niveis: [string, (q: Prefixo) => boolean][] = [
+    [`${r.uf} ${r.localidade} · ${r.transportadora}`, (q) => q.regra?.uf === r.uf && q.regra?.localidade === r.localidade && q.regra?.transportadora === r.transportadora],
+    [`${r.uf} · ${r.transportadora}`, (q) => q.regra?.uf === r.uf && q.regra?.transportadora === r.transportadora],
+  ];
+  for (const [rotulo, filtro] of niveis) {
+    const qs = d.prefixos.filter(filtro);
+    const treino = soma(...qs.map((q) => q.base.treino));
+    if (qs.length > 1 && total(treino) >= PARAMS.minEnviosPrefixo) return { treino, rotulo: `${rotulo} · ${qs.length} prefixos, ${total(treino)} envios` };
+  }
+  return null;
+}
 
 export type EfeitoTiktok = {
   fatia: number; corte: number; regua: number;
@@ -234,15 +254,18 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1, usarTiktok 
     const enviosAno = total(p.teste) * fator, vm = valorMedio(p.teste);
     const antes = custo(p.teste, fator);
     let acao: Acao = "manter", m = cur, transpNova: string | null = null, hDepois = p.teste, freteExtra = 0;
+    const poucos = total(p.base.treino) < PARAMS.minEnviosPrefixo;
+    const viz = poucos && total(p.base.teste) > 0 ? vizinhos(d, p) : null;
+    const treinoRef = viz ? viz.treino : p.base.treino;
 
-    if (total(p.base.treino) < PARAMS.minEnviosPrefixo || total(p.base.teste) === 0) acao = "sem_dados";
+    if ((poucos && !viz) || total(p.base.teste) === 0) acao = "sem_dados";
     else {
-      const mm = margemParaMeta(p.base.treino, meta, cur + 3);
+      const mm = margemParaMeta(treinoRef, meta, cur + 3);
       m = mm ?? cur + 1; // se nem +3 cumpre, o problema é a transportadora: +1 e incidente
       // rota: transportadora que atende, com histórico no prefixo, cumprindo com menos margem
       const atende = new Set(p.atende.map((a) => a.transportadora));
       let melhor: { t: string; m: number } | null = null;
-      for (const [t, T] of Object.entries(p.transp)) {
+      for (const [t, T] of Object.entries(viz ? {} : p.transp)) { // rota exige histórico próprio
         if (!atende.has(t) || t === p.regra?.transportadora) continue;
         if (total(T.base.treino) < 20 || total(T.base.teste) < 10) continue;
         const mt = margemParaMeta(T.base.treino, meta, cur + 3);
@@ -273,7 +296,7 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1, usarTiktok 
       atrasosEvitados: antes.atrasos - depois.atrasos, cancelamentosEvitados: antes.cancelamentos - depois.cancelamentos,
       economiaDireta, economiaRecompra: economiaTotal - economiaDireta, economiaTotal,
       conversao, freteExtra, valorLiquido: economiaTotal + conversao - freteExtra, antes, depois,
-      selecionada: false, peloTiktok: false,
+      selecionada: false, peloTiktok: false, estimadoPor: viz && acao !== "sem_dados" ? viz.rotulo : null,
     });
   }
 

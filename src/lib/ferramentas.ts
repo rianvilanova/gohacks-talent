@@ -44,6 +44,7 @@ const linha = (x: AcaoPrefixo) => ({
   atrasos_evitados_ano: r0(x.atrasosEvitados), cancelamentos_evitados_ano: r0(x.cancelamentosEvitados),
   economia_atrasos_rs_ano: r0(x.economiaTotal), efeito_conversao_rs_ano: r0(x.conversao), frete_extra_rs_ano: r0(x.freteExtra),
   valor_liquido_rs_ano: r0(x.valorLiquido), recomendada: recomendada(x),
+  ...(x.estimadoPor ? { estimado_pela_regiao: `poucos envios próprios; margem aprendida em ${x.estimadoPor}` } : {}),
   ...(x.peloTiktok ? { incluida_pela_regua_tiktok: "saldo isolado negativo, mas ajuda a loja a passar de 92% e destravar o TikTok Shop" } : {}),
 });
 
