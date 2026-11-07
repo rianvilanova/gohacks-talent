@@ -77,7 +77,6 @@ export default function Painel() {
   const [meta, setMeta] = useState(0.95);
   const [queda, setQueda] = useState(1);
   const [aba, setAba] = useState<Aba>("pedidos");
-  const [aplicados, setAplicados] = useState<Record<string, "voce" | "agente">>({});
   const [filtroPedido, setFiltroPedido] = useState<"todas" | "rotear" | "cobrar">("todas");
   const [soAcao, setSoAcao] = useState(true);
   const [aberto, setAberto] = useState<string | null>(null);
@@ -102,7 +101,7 @@ export default function Painel() {
   const [pergunta, setPergunta] = useState("");
   const fimRef = useRef<HTMLDivElement>(null);
 
-  function limpar() { setAplicados({}); setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setRodadas([]); setAcionamentos([]); setUso(""); }
+  function limpar() { setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setRodadas([]); setAcionamentos([]); setUso(""); }
   function irParaDiaSeguinte() { setOntem(propostas.filter((p) => decisoes[p.id] === "aprovada")); setDia(2); limpar(); }
   function voltarParaHoje() { setDia(1); setOntem([]); limpar(); }
 
@@ -178,12 +177,12 @@ export default function Painel() {
     const cobrar = torre.emRisco.slice(0, 80).map((e) => ({
       id: e.id, tipo: "cobrar" as const, p3: e.p3, uf: e.uf, cidade: cid(e.p3), situacao: `Parado há ${e.paradoDiasUteis} dias com ${e.t}`,
       acao: "Cobrar a transportadora", ganho: e.vencido ? "já passou da data prometida" : `vence em ${e.prometida.slice(8, 10)}/${e.prometida.slice(5, 7)}`, urgente: e.vencido,
+      conta: `chamado no portal da ${e.t} pedindo nova previsão de entrega; sem resposta em 24h o agente reabre; se extraviou, aciona o financeiro`,
     }));
     return [...cobrar, ...rota];
   }, [plano, roteados, previaRota, diaDoPedido, ONTEM, torre]);
-  const statusDe = (sg: Sugestao) => aplicados[sg.id] ?? ((sg.tipo === "cobrar" && comChamado.has(sg.id)) || (sg.tipo === "rotear" && roteados?.some((r) => r.id === sg.id)) ? "agente" : undefined);
+  const statusDe = (sg: Sugestao) => ((sg.tipo === "cobrar" && comChamado.has(sg.id)) || (sg.tipo === "rotear" && roteados?.some((r) => r.id === sg.id)) ? "agente" : undefined);
   const sugestoesVisiveis = sugestoes.filter((sg) => filtroPedido === "todas" || sg.tipo === filtroPedido);
-  const pendentes = sugestoesVisiveis.filter((sg) => sg.tipo === "cobrar" && !statusDe(sg));
   const ganhoRotasOntem = sugestoes.filter((sg) => sg.tipo === "rotear").length ? (roteados ?? previaRota.roteados).filter((r) => diaDoPedido.get(r.id) === ONTEM).reduce((a, r) => a + r.ganhoRs, 0) : 0;
 
   return (
@@ -273,12 +272,8 @@ export default function Painel() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h2 className="font-semibold">Pedidos de ontem ({ONTEM.split("-").reverse().slice(0, 2).join("/")}): o que fazer agora</h2>
-                  <p className="text-xs text-slate-500">O agente passou pelos pedidos de ontem e pelos que estão parados. A troca de transportadora é automática (antes do despacho); as cobranças você aplica ou deixa o agente aplicar na varredura.</p>
+                  <p className="text-xs text-slate-500">O agente passou pelos pedidos de ontem e pelos que estão parados e age sozinho: troca a transportadora antes do despacho e abre a cobrança no portal da transportadora. Você só acompanha.</p>
                 </div>
-                <button disabled={!pendentes.length} onClick={() => setAplicados((a) => ({ ...a, ...Object.fromEntries(pendentes.map((sg) => [sg.id, "voce" as const])) }))}
-                  className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-40">
-                  Cobrar todas ({pendentes.length})
-                </button>
               </div>
 
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -290,7 +285,7 @@ export default function Painel() {
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-500">Pedidos parados há 3+ dias</div>
                   <div className="num text-2xl font-semibold">{int(torre.emRisco.length)}</div>
-                  <div className="text-xs text-slate-500">os 80 mais urgentes vão para cobrança hoje (limite diário)</div>
+                  <div className="text-xs text-slate-500">os 80 mais urgentes são cobrados automaticamente hoje (limite diário)</div>
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-500">Multa de atraso a cobrar</div>
@@ -322,9 +317,8 @@ export default function Painel() {
                           <td><span className={`rounded-full px-2 py-0.5 ${sg.tipo === "rotear" ? "bg-sky-100 text-sky-800" : "bg-rose-100 text-rose-800"}`}>{sg.acao}</span>
                             {sg.conta && <div className="mt-0.5 max-w-xs text-[11px] leading-tight text-emerald-700">{sg.conta}</div>}</td>
                           <td className="text-right">
-                            {st ? <span className="text-emerald-700">✔ {st === "agente" ? "feito pelo agente" : "aplicado"}</span>
-                              : sg.tipo === "rotear" ? <span className="text-sky-700">automático</span>
-                              : <button onClick={() => setAplicados((a) => ({ ...a, [sg.id]: "voce" }))} className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-50">Aplicar</button>}
+                            {st ? <span className="text-emerald-700">✔ feito pelo agente</span>
+                              : <span className={sg.tipo === "rotear" ? "text-sky-700" : "text-rose-700"}>automático</span>}
                           </td>
                         </tr>
                       );
