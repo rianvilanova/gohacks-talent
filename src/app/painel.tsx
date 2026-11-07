@@ -282,6 +282,34 @@ export default function Painel() {
                   </table>
                 </div>
               </div>
+
+              <div className="mt-5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="text-xs font-medium text-slate-600">Pedidos que vão trocar de transportadora ({(roteados ?? previaRota.roteados).length})</div>
+                  <span className={`text-[11px] ${roteados ? "text-emerald-700" : "text-slate-400"}`}>{roteados ? "feito pelo agente hoje" : "o agente executa na varredura"}</span>
+                </div>
+                <p className="text-[11px] text-slate-400">Só troca quando a outra transportadora atende a região, tem histórico ali (20+ pedidos), chega na data já prometida ao cliente com 5+ pontos a mais de chance e o ganho paga o frete.</p>
+                <div className="mt-2 max-h-72 overflow-auto">
+                  <table className="num w-full text-xs">
+                    <thead className="sticky top-0 bg-white text-left text-slate-500">
+                      <tr><th className="py-1">Pedido</th><th>Região</th><th>De → para</th><th className="text-right">Chance de chegar no prazo</th></tr>
+                    </thead>
+                    <tbody>
+                      {(roteados ?? previaRota.roteados).map((r) => {
+                        const px = plano.prefixos.find((q) => q.p3 === r.p3);
+                        return (
+                          <tr key={r.id} className="border-t border-slate-100">
+                            <td className="py-1 text-slate-500">{r.id}</td>
+                            <td>{px?.cidade ?? r.p3} <span className="text-slate-400">{r.uf} · {r.p3}</span></td>
+                            <td>{r.de} → <b>{r.para}</b></td>
+                            <td className="text-right">{pct(r.noPrazoDe)} → <b className="text-emerald-700">{pct(r.noPrazoPara)}</b></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </section>
           )}
 

@@ -423,10 +423,13 @@ export type Roteamento = { id: string; p3: string; uf: string; de: string; para:
 
 /**
  * rotear_envio para os envios ainda não postados: troca para a transportadora que atende a região
- * e cumpre mais no prefixo (histórico do treino, ≥20 envios, ganho ≥5 p.p.), no máximo 40% dos envios da UF no dia.
+ * e cumpre mais no prefixo (histórico do treino, ≥minEnvios, ganho ≥minGanho), no máximo 40% dos envios da UF no dia.
+ * Trava econômica: o atraso evitado (custo médio por atraso do prefixo) tem de pagar o frete extra.
  */
-export function rotearNaoPostados(d: Dados & { torre: Torre }) {
+export const CRITERIO_ROTA = { minEnvios: 20, minGanho: 0.05 }; // ~160 de 1.563 pedidos novos; critério amarrado (fora da amostra, rota solta é quase cara ou coroa)
+export function rotearNaoPostados(d: Dados & { torre: Torre }, crit = CRITERIO_ROTA) {
   const porP3 = new Map(d.prefixos.map((p) => [p.p3, p]));
+  const fator = fatorAno(d);
   const taxa = (h: Hist, m: number) => noPrazo(comMargem(h, m));
   const totalUfDia = new Map<string, number>(), usadoUfDia = new Map<string, number>();
   for (const [, , uf, , , dia] of d.torre.naoPostados) totalUfDia.set(uf + dia, (totalUfDia.get(uf + dia) ?? 0) + 1);
@@ -436,15 +439,17 @@ export function rotearNaoPostados(d: Dados & { torre: Torre }) {
     const p = porP3.get(p3); if (!p || !p.regra) continue;
     analisados++;
     const m = p.regra.margem, atende = new Set(p.atende.map((a) => a.transportadora));
-    const atual = p.transp[t] && total(p.transp[t].base.treino) >= 20 ? taxa(p.transp[t].base.treino, m) : taxa(p.base.treino, m);
+    const atual = p.transp[t] && total(p.transp[t].base.treino) >= crit.minEnvios ? taxa(p.transp[t].base.treino, m) : taxa(p.base.treino, m);
     const sla0 = slaDe(p, t) ?? p.regra.sla;
+    const c = custo(p.teste, fator), custoPorAtraso = c.atrasos ? c.total / c.atrasos : 0;
     let melhor: { t: string; r: number } | null = null;
     for (const [tt, T] of Object.entries(p.transp)) {
-      if (tt === t || !atende.has(tt) || total(T.base.treino) < 20) continue;
+      if (tt === t || !atende.has(tt) || total(T.base.treino) < crit.minEnvios) continue;
       const slaT = slaDe(p, tt); if (slaT === null) continue;
       // o cliente já recebeu a data calculada com o SLA original: SLA maior na nova transportadora consome a margem
       const r = taxa(T.base.treino, m + sla0 - slaT);
-      if (r - atual >= 0.05 && (!melhor || r > melhor.r)) melhor = { t: tt, r };
+      const extra = (p.fretePorTransp[tt] ?? 0) - (p.fretePorTransp[t] ?? 0);
+      if (r - atual >= crit.minGanho && (r - atual) * custoPorAtraso >= extra && (!melhor || r > melhor.r)) melhor = { t: tt, r };
     }
     if (!melhor) continue;
     const k = uf + dia, usado = usadoUfDia.get(k) ?? 0;
