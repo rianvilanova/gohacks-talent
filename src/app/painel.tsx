@@ -83,7 +83,10 @@ export default function Painel() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ meta, sensibilidade: queda, pergunta: textoPergunta }),
       });
-      if (!r.body) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok || !r.body) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.erro ?? `HTTP ${r.status}`);
+      }
       const leitor = r.body.getReader(), dec = new TextDecoder();
       let buf = "";
       for (;;) {
