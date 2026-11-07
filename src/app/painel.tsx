@@ -67,6 +67,11 @@ function passoDoAgente(e: Extract<Evento, { tipo: "ferramenta" }>) {
 }
 
 type Aba = "regioes" | "pedidos" | "impacto";
+type Rodada = { pergunta: string | null; eventos: Evento[] };
+const PERGUNTAS_PRONTAS = ["E se prometer +1 dia em Marabá?", "Qual transportadora mais atrasa?", "Por que São Paulo tem prazo sobrando?"];
+function comNegrito(t: string) {
+  return t.split(/\*\*(.+?)\*\*/g).map((p, i) => (i % 2 ? <b key={i}>{p}</b> : p));
+}
 
 export default function Painel() {
   const [meta, setMeta] = useState(0.95);
@@ -83,7 +88,9 @@ export default function Painel() {
 
   // ---------- agente ----------
   const [rodando, setRodando] = useState(false);
-  const [eventos, setEventos] = useState<Evento[]>([]);
+  const [rodadas, setRodadas] = useState<Rodada[]>([]);
+  const eventos = rodadas.flatMap((r) => r.eventos);
+  const addEvento = (ev: Evento) => setRodadas((rs) => rs.length ? [...rs.slice(0, -1), { ...rs[rs.length - 1], eventos: [...rs[rs.length - 1].eventos, ev] }] : rs);
   const [propostas, setPropostas] = useState<Proposta[]>([]);
   const [decisoes, setDecisoes] = useState<Record<string, "aprovada" | "recusada">>({});
   const [uso, setUso] = useState<string>("");
@@ -95,12 +102,14 @@ export default function Painel() {
   const [pergunta, setPergunta] = useState("");
   const fimRef = useRef<HTMLDivElement>(null);
 
-  function limpar() { setAplicados({}); setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setEventos([]); setAcionamentos([]); setUso(""); }
+  function limpar() { setAplicados({}); setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setRodadas([]); setAcionamentos([]); setUso(""); }
   function irParaDiaSeguinte() { setOntem(propostas.filter((p) => decisoes[p.id] === "aprovada")); setDia(2); limpar(); }
   function voltarParaHoje() { setDia(1); setOntem([]); limpar(); }
 
   async function rodarAgente(textoPergunta?: string) {
-    setRodando(true); setEventos([]); setUso("");
+    setRodando(true); setUso("");
+    if (textoPergunta) { setRodadas((rs) => [...rs, { pergunta: textoPergunta, eventos: [] }]); setPergunta(""); }
+    else setRodadas([{ pergunta: null, eventos: [] }]);
     if (!textoPergunta) { setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setAcionamentos([]); }
     try {
       const r = await fetch("/api/agente", {
@@ -124,12 +133,12 @@ export default function Painel() {
             if (ev.roteamento?.length) setRoteados(ev.roteamento);
             if (ev.acionamentos?.length) setAcionamentos(ev.acionamentos);
             setUso(`${ev.uso.modelo} · ${int(ev.uso.tokensEntrada + ev.uso.tokensSaida)} tokens`);
-          } else setEventos((x) => [...x, ev]);
+          } else addEvento(ev);
           setTimeout(() => fimRef.current?.scrollIntoView({ block: "nearest" }), 50);
         }
       }
     } catch (e) {
-      setEventos((x) => [...x, { tipo: "erro", texto: String(e) }]);
+      addEvento({ tipo: "erro", texto: String(e) });
     } finally { setRodando(false); }
   }
 
@@ -391,21 +400,53 @@ export default function Painel() {
                 {rodando ? "Trabalhando…" : "▶ Rodar agente"}
               </button>
             </div>
-            <ol className="mt-3 max-h-72 space-y-1.5 overflow-auto text-sm">
-              {eventos.length === 0 && !rodando && <li className="text-slate-400">Clique em “Rodar agente” para ver o que ele faz, passo a passo (~1 min).</li>}
-              {eventos.map((e, i) => (
-                <li key={i} className={e.tipo === "erro" ? "text-rose-700" : e.tipo === "final" ? "whitespace-pre-line rounded-lg bg-slate-50 p-3 text-slate-800" : "text-slate-600"}>
-                  {e.tipo === "ferramenta" ? <>✓ {passoDoAgente(e)}</> : e.tipo === "pensamento" ? <span className="text-slate-400">{e.texto}</span> : "texto" in e ? e.texto : null}
-                </li>
-              ))}
-              {rodando && <li className="animate-pulse text-slate-400">…</li>}
+            <div className="mt-3 max-h-[28rem] space-y-4 overflow-auto text-sm">
+              {rodadas.length === 0 && !rodando && <p className="text-slate-400">Clique em “Rodar agente” para ver o que ele faz, passo a passo (~1 min), ou faça uma pergunta abaixo.</p>}
+              {rodadas.map((r, i) => {
+                const ultima = i === rodadas.length - 1;
+                const passos = r.eventos.filter((e) => e.tipo === "ferramenta" || e.tipo === "pensamento");
+                const consultas = passos.filter((e) => e.tipo === "ferramenta").length;
+                const respostas = r.eventos.filter((e) => e.tipo === "final" || e.tipo === "erro");
+                return (
+                  <div key={i} className="space-y-2">
+                    {r.pergunta ? (
+                      <div className="ml-8 rounded-lg rounded-tr-none bg-slate-900 px-3 py-2 text-white">
+                        <div className="text-[11px] text-slate-300">Você perguntou</div>
+                        {r.pergunta}
+                      </div>
+                    ) : <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Varredura do dia</div>}
+                    {passos.length > 0 && (
+                      <details open={ultima && rodando} className="text-xs text-slate-500">
+                        <summary className="cursor-pointer">Como o agente chegou nisso ({consultas} consulta{consultas === 1 ? "" : "s"} aos dados)</summary>
+                        <ol className="mt-1 space-y-1 border-l border-slate-200 pl-3">
+                          {passos.map((e, j) => <li key={j} className={e.tipo === "pensamento" ? "text-slate-400" : "text-slate-600"}>{e.tipo === "ferramenta" ? <>✓ {passoDoAgente(e)}</> : "texto" in e ? e.texto : null}</li>)}
+                        </ol>
+                      </details>
+                    )}
+                    {ultima && rodando && <p className="animate-pulse text-xs text-slate-400">{r.pergunta ? "Consultando os dados para responder…" : "Trabalhando…"}</p>}
+                    {respostas.map((e, j) => "texto" in e && (
+                      e.tipo === "erro" ? <p key={j} className="text-rose-700">{e.texto}</p> : (
+                        <div key={j} className="rounded-lg rounded-tl-none border border-emerald-200 bg-emerald-50/60 p-3 text-slate-800">
+                          <div className="mb-1 text-[11px] font-medium text-emerald-800">{r.pergunta ? "Resposta do agente" : "Resumo do agente"}</div>
+                          <div className="whitespace-pre-line">{comNegrito(e.texto)}</div>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                );
+              })}
               <div ref={fimRef} />
-            </ol>
-            <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (pergunta.trim()) rodarAgente(pergunta); }}>
-              <input value={pergunta} onChange={(e) => setPergunta(e.target.value)} placeholder="Pergunte algo: e se prometer +1 dia em Marabá?"
+            </div>
+            <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (pergunta.trim() && !rodando) rodarAgente(pergunta.trim()); }}>
+              <input value={pergunta} onChange={(e) => setPergunta(e.target.value)} placeholder="Pergunte ao agente sobre uma região, transportadora ou pedido"
                 className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-              <button disabled={rodando} className="rounded-lg border border-slate-300 px-3 text-sm disabled:opacity-50">Perguntar</button>
+              <button disabled={rodando || !pergunta.trim()} className="rounded-lg border border-slate-300 px-3 text-sm disabled:opacity-50">Perguntar</button>
             </form>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {PERGUNTAS_PRONTAS.map((q) => (
+                <button key={q} disabled={rodando} onClick={() => rodarAgente(q)} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-200 disabled:opacity-50">{q}</button>
+              ))}
+            </div>
             {uso && <p className="mt-2 text-[11px] text-slate-400">IA: {uso}</p>}
           </section>
 

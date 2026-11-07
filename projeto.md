@@ -34,12 +34,6 @@ Radar de Prazo é um assistente que trabalha sozinho todo dia:
 Enxerga: junta os 5 sites das transportadoras e mostra, região por região, onde a promessa está sendo quebrada. (resolve o Problema 1)
 Age antes da reclamação, e na dose certa: para cada região ruim, descobre a causa e sugere a correção mínima: “em Marabá, +1 dia no prazo”, não “+2 dias no país inteiro”. (resolve o Problema 2)
 Faz a conta: cada sugestão vem com o valor: “isso evita X cancelamentos e economiza R$ Y por ano”. O gerente só aprova ou recusa. (resolve o Problema 3)
-O resultado (testado nos dados)
-	Hoje	Com o Radar
-Pedidos no prazo	92,4%	96,8%
-Atrasos por ano	73 mil	31 mil
-Cancelamentos por ano	3.855	1.576
-Custo direto dos atrasos	R$ 708 mil	R$ 285 mil
 
 Economia: R$ 424 mil por ano (R$ 1,66 mi contando as recompras).
 
