@@ -12,7 +12,8 @@ export type Prefixo = {
   p3: string; uf: string; cidade: string; regra: Regra | null;
   atende: { transportadora: string; sla: number }[];
   todos: Hist; treino: Hist; teste: Hist;
-  transp: Record<string, { todos: Hist; treino: Hist; teste: Hist; freteMedio: number | null }>;
+  base: { treino: Hist; teste: Hist }; // atraso vs promessa SEM margem, índice = dias + 15 (negativo = adiantado)
+  transp: Record<string, { todos: Hist; treino: Hist; teste: Hist; base: { treino: Hist; teste: Hist }; freteMedio: number | null }>;
   fretePorTransp: Record<string, number>;
   concorrentesPrazoMediana: number | null; concorrentesColetas: number;
 };
@@ -143,5 +144,125 @@ export function planoMargens(d: Dados, meta = PARAMS.metaPorPrefixo, so_liquido_
     prefixosAlterados: porPrefixo.filter((x) => x.k > 0).length,
     diasExtrasMedios: diasExtras / total(soma(...hsAntes)),
     porPrefixo,
+  };
+}
+
+// ======================= Plano de ação para todos os prefixos =======================
+
+export const BASE = 15;
+
+/** Converte o histograma "base" (sem margem) no histograma de atraso com margem m. */
+export function comMargem(b: Hist, m: number): Hist {
+  const r = vazio(16);
+  b.n.forEach((x, i) => {
+    if (!x) return;
+    const d = Math.min(15, Math.max(0, i - BASE - m));
+    r.n[d] += x; r.v[d] += b.v[i];
+  });
+  return r;
+}
+
+const escala = (h: Hist, k: number): Hist => ({ n: h.n.map((x) => x * k), v: h.v.map((x) => x * k) });
+
+export type Acao = "manter" | "mais_margem" | "menos_margem" | "rotear" | "incidente" | "sem_dados";
+
+export type AcaoPrefixo = {
+  p3: string; cidade: string; uf: string; acao: Acao;
+  margemAtual: number; margemNova: number; prazoAtual: number | null; prazoNovo: number | null;
+  transportadoraAtual: string | null; transportadoraNova: string | null;
+  concorrentes: number | null; enviosAno: number;
+  noPrazoAntes: number; noPrazoDepois: number;
+  atrasosEvitados: number; cancelamentosEvitados: number;
+  economiaDireta: number; economiaRecompra: number; economiaTotal: number;
+  conversao: number; // R$ de margem: + vendas ganhas (prazo menor), - vendas perdidas (prazo maior)
+  freteExtra: number;
+  valorLiquido: number; // economiaTotal + conversao - freteExtra
+  antes: Custo; depois: Custo;
+};
+
+export type PlanoAcoes = {
+  meta: number; quedaConversaoPorDia: number;
+  antes: Custo; depois: Custo;
+  atrasosEvitados: number; cancelamentosEvitados: number;
+  economiaDireta: number; economiaTotal: number; conversao: number; freteExtra: number; valorLiquido: number;
+  contagem: Record<Acao, number>;
+  prefixos: AcaoPrefixo[];
+};
+
+/** Menor margem absoluta (0..max) que leva o histograma base à meta; null se nenhuma chega. */
+function margemParaMeta(b: Hist, meta: number, max: number): number | null {
+  for (let m = 0; m <= max; m++) if (noPrazo(comMargem(b, m)) >= meta) return m;
+  return null;
+}
+
+/**
+ * Para cada prefixo: aprende no treino a menor margem que cumpre a meta (pode ser menor que a atual)
+ * e se outra transportadora que atende a região cumpre com menos margem; avalia no teste e anualiza.
+ */
+export function planoAcoes(d: Dados, meta = 0.95, quedaConversaoPorDia = PARAMS.quedaConversaoPorDia): PlanoAcoes {
+  const fator = fatorAno(d);
+  const lista: AcaoPrefixo[] = [];
+  const hsAntes: Hist[] = [], hsDepois: Hist[] = [];
+  for (const p of d.prefixos) {
+    const cur = p.regra?.margem ?? 0, prazo = p.regra?.prazo ?? null;
+    const enviosAno = total(p.teste) * fator, vm = valorMedio(p.teste);
+    const antes = custo(p.teste, fator);
+    let acao: Acao = "manter", m = cur, transpNova: string | null = null, hDepois = p.teste, freteExtra = 0;
+
+    if (total(p.base.treino) < PARAMS.minEnviosPrefixo || total(p.base.teste) === 0) acao = "sem_dados";
+    else {
+      const mm = margemParaMeta(p.base.treino, meta, cur + 3);
+      m = mm ?? cur + 1; // se nem +3 cumpre, o problema é a transportadora: +1 e incidente
+      // rota: transportadora que atende, com histórico no prefixo, cumprindo com menos margem
+      const atende = new Set(p.atende.map((a) => a.transportadora));
+      let melhor: { t: string; m: number } | null = null;
+      for (const [t, T] of Object.entries(p.transp)) {
+        if (!atende.has(t) || t === p.regra?.transportadora) continue;
+        if (total(T.base.treino) < 20 || total(T.base.teste) < 10) continue;
+        const mt = margemParaMeta(T.base.treino, meta, cur + 3);
+        if (mt !== null && mt < m && (!melhor || mt < melhor.m)) melhor = { t, m: mt };
+      }
+      if (melhor) {
+        const T = p.transp[melhor.t];
+        transpNova = melhor.t; m = melhor.m; acao = "rotear";
+        hDepois = comMargem(escala(T.base.teste, total(p.teste) / total(T.base.teste)), m);
+        const fAtual = p.regra ? p.fretePorTransp[p.regra.transportadora] : undefined, fNovo = p.fretePorTransp[melhor.t];
+        if (fAtual && fNovo) freteExtra = Math.max(0, fNovo - fAtual) * enviosAno;
+      } else if (mm === null) { acao = "incidente"; hDepois = comMargem(p.base.teste, m); }
+      else if (m > cur) { acao = "mais_margem"; hDepois = comMargem(p.base.teste, m); }
+      else if (m < cur) { acao = "menos_margem"; hDepois = comMargem(p.base.teste, m); }
+    }
+    const depois = custo(hDepois, fator);
+    // conversão: só contam os dias em que ficamos atrás da mediana dos concorrentes
+    let conversao = 0;
+    if (prazo !== null && m !== cur) {
+      const ref = p.concorrentesPrazoMediana ?? prazo;
+      const atrasAntes = Math.max(0, prazo - ref), atrasDepois = Math.max(0, prazo + (m - cur) - ref);
+      conversao = enviosAno * quedaConversaoPorDia * (atrasAntes - atrasDepois) * PARAMS.margemContribuicao * vm;
+    }
+    const economiaDireta = antes.direto - depois.direto, economiaTotal = antes.total - depois.total;
+    hsAntes.push(p.teste); hsDepois.push(hDepois);
+    lista.push({
+      p3: p.p3, cidade: p.cidade, uf: p.uf, acao, margemAtual: cur, margemNova: m,
+      prazoAtual: prazo, prazoNovo: prazo === null ? null : prazo + (m - cur),
+      transportadoraAtual: p.regra?.transportadora ?? null, transportadoraNova: transpNova,
+      concorrentes: p.concorrentesPrazoMediana, enviosAno,
+      noPrazoAntes: antes.noPrazo, noPrazoDepois: depois.noPrazo,
+      atrasosEvitados: antes.atrasos - depois.atrasos, cancelamentosEvitados: antes.cancelamentos - depois.cancelamentos,
+      economiaDireta, economiaRecompra: economiaTotal - economiaDireta, economiaTotal,
+      conversao, freteExtra, valorLiquido: economiaTotal + conversao - freteExtra, antes, depois,
+    });
+  }
+  const A = custo(soma(...hsAntes), fator), D = custo(soma(...hsDepois), fator);
+  const s = (k: "conversao" | "freteExtra") => lista.reduce((a, x) => a + x[k], 0);
+  const contagem = { manter: 0, mais_margem: 0, menos_margem: 0, rotear: 0, incidente: 0, sem_dados: 0 } as Record<Acao, number>;
+  lista.forEach((x) => contagem[x.acao]++);
+  const conversao = s("conversao"), freteExtra = s("freteExtra");
+  return {
+    meta, quedaConversaoPorDia, antes: A, depois: D,
+    atrasosEvitados: A.atrasos - D.atrasos, cancelamentosEvitados: A.cancelamentos - D.cancelamentos,
+    economiaDireta: A.direto - D.direto, economiaTotal: A.total - D.total, conversao, freteExtra,
+    valorLiquido: A.total - D.total + conversao - freteExtra, contagem,
+    prefixos: lista.sort((a, b) => b.valorLiquido - a.valorLiquido),
   };
 }

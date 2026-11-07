@@ -76,6 +76,15 @@ for (const [arq, col, sep] of [["portal_expressa_ja.csv", "codigo_rastreio", ","
 const novoHist = () => ({ n: Array(MAXD + 1).fill(0), v: Array(MAXD + 1).fill(0) });
 const addHist = (h, d, v) => { const i = Math.min(d, MAXD); h.n[i]++; h.v[i] = Math.round((h.v[i] + v) * 100) / 100; };
 
+// "base" = atraso em relação à promessa SEM margem de segurança (negativo = chegou antes).
+// Assim o app simula qualquer margem m: atraso = base - m. Margem vigente na data do pedido vem do histórico.
+const BASE = 15; // índice 0..30 representa -15..+15
+const novoBase = () => ({ n: Array(2 * BASE + 1).fill(0), v: Array(2 * BASE + 1).fill(0) });
+const addBase = (h, d, v) => { const i = Math.max(0, Math.min(2 * BASE, d + BASE)); h.n[i]++; h.v[i] = Math.round((h.v[i] + v) * 100) / 100; };
+const historico = {};
+for (const r of lerCsv("historico_regras_site.csv")) (historico[r.prefixo_cep3] ??= []).push({ ini: r.vigencia_inicio, fim: r.vigencia_fim || "9999-12-31", margem: Number(r.margem_seguranca_dias) });
+const margemVigente = (p3, dia) => (historico[p3] ?? []).find((h) => h.ini <= dia && dia <= h.fim)?.margem ?? 0;
+
 const envios = lerCsv("envios.csv");
 const pref = {}; // p3 -> agregados
 const geral = { todos: novoHist(), treino: novoHist(), teste: novoHist() };
@@ -86,19 +95,22 @@ for (const e of envios) {
   const p3 = e.cep.slice(0, 3);
   envioP3.set(e.envio_id, p3);
   const ent = entrega.get(norm(e.codigo_rastreio));
-  let atraso;
-  if (ent) { casados++; atraso = ent > e.data_prometida ? diasUteisEntre(e.data_prometida, ent) : 0; }
+  let atraso, saldo;
+  if (ent) { casados++; atraso = ent > e.data_prometida ? diasUteisEntre(e.data_prometida, ent) : 0; saldo = atraso > 0 ? atraso : -diasUteisEntre(ent, e.data_prometida); }
   else if (vistos.has(norm(e.codigo_rastreio)) && e.data_prometida < EXPORTACAO) {
     // está no portal, prazo vencido e nunca entregue (extravio, devolução, parado): conta como atraso até a exportação
-    semEntrega++; atraso = Math.max(1, diasUteisEntre(e.data_prometida, EXPORTACAO));
+    semEntrega++; atraso = Math.max(1, diasUteisEntre(e.data_prometida, EXPORTACAO)); saldo = atraso;
   } else continue; // fora da janela dos portais ou ainda dentro do prazo
 
   const v = Number(e.valor_pedido);
   const periodo = e.data_pedido.slice(0, 10) < CORTE ? "treino" : "teste";
-  const P = (pref[p3] ??= { uf: e.uf, cidades: {}, todos: novoHist(), treino: novoHist(), teste: novoHist(), transp: {} });
+  const base = saldo + margemVigente(p3, e.data_pedido.slice(0, 10));
+  const P = (pref[p3] ??= { uf: e.uf, cidades: {}, todos: novoHist(), treino: novoHist(), teste: novoHist(), base: { treino: novoBase(), teste: novoBase() }, transp: {} });
+  addBase(P.base[periodo], base, v);
   P.cidades[e.cidade] = (P.cidades[e.cidade] ?? 0) + 1;
   addHist(P.todos, atraso, v); addHist(P[periodo], atraso, v);
-  const T = (P.transp[e.transportadora] ??= { todos: novoHist(), treino: novoHist(), teste: novoHist() });
+  const T = (P.transp[e.transportadora] ??= { todos: novoHist(), treino: novoHist(), teste: novoHist(), base: { treino: novoBase(), teste: novoBase() } });
+  addBase(T.base[periodo], base, v);
   addHist(T.todos, atraso, v); addHist(T[periodo], atraso, v);
   addHist(geral.todos, atraso, v); addHist(geral[periodo], atraso, v);
   const G = (porTransp[e.transportadora] ??= novoHist());
@@ -145,7 +157,7 @@ const prefixos = Object.entries(pref).map(([p3, P]) => {
     Object.entries(frete).filter(([k]) => k.startsWith(p3 + "|")).map(([k, f]) => [k.split("|")[1], Math.round((f[0] / f[1]) * 100) / 100]),
   );
   return {
-    p3, uf: P.uf, cidade, regra, atende, todos: P.todos, treino: P.treino, teste: P.teste, transp, fretePorTransp,
+    p3, uf: P.uf, cidade, regra, atende, todos: P.todos, treino: P.treino, teste: P.teste, base: P.base, transp, fretePorTransp,
     concorrentesPrazoMediana: mediana(conc[p3] ?? []), concorrentesColetas: (conc[p3] ?? []).length,
   };
 }).sort((a, b) => a.p3.localeCompare(b.p3));
