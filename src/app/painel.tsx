@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import dadosJson from "@/data/radar.json";
 import {
   type Dados, type Acao, type AcaoPrefixo, type Torre, type Roteamento, type Veredito, planoAcoes, resumir, recomendada, ehAcaoReal,
-  FAIXAS, veredito, rotearNaoPostados,
+  FAIXAS, PARAMS, veredito, rotearNaoPostados,
 } from "@/lib/radar";
 import type { Proposta, Acionamento } from "@/lib/ferramentas";
 import diaSeguinteJson from "@/data/dia_seguinte.json";
@@ -146,6 +146,19 @@ export default function Painel() {
   const comChamado = new Set(chamados.map((c) => c.id));
   const atrasadosDe100 = Math.round((1 - plano.antes.noPrazo) * 100);
 
+  // ---------- experiência do cliente: hoje × com as ações recomendadas (mesmo modelo, sem número novo) ----------
+  const cliente = useMemo(() => {
+    const z = { atrasos: 0, graves: 0, contatos: 0, cancel: 0 };
+    const hoje = { ...z }, agente = { ...z };
+    for (const x of plano.prefixos) {
+      for (const [alvo, c] of [[hoje, x.antes], [agente, recomendada(x) ? x.depois : x.antes]] as const) {
+        alvo.atrasos += c.atrasos; alvo.cancel += c.cancelamentos; alvo.contatos += c.contato / PARAMS.custoContato;
+        alvo.graves += c.porFaixa["6-10"].atrasos + c.porFaixa[">10"].atrasos;
+      }
+    }
+    return { hoje, agente };
+  }, [plano]);
+
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
       <header>
@@ -179,6 +192,33 @@ export default function Painel() {
           {tk?.valorAno ? <div className="num mt-3 text-xs text-emerald-800">inclui {brl(tk.valorAno)} de vendas recuperadas no TikTok Shop (+{int(tk.pedidosRecuperadosAno)} pedidos/ano)</div> : null}
         </div>
       </section>
+      {/* experiência do cliente */}
+      <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="font-semibold">Para o cliente (imagem da marca)</h2>
+          <span className="text-[11px] text-slate-400">por ano · hoje → com o agente</span>
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            { t: "Pedidos que chegam atrasados", h: cliente.hoje.atrasos, a: cliente.agente.atrasos, d: "clientes que esperam além do prometido" },
+            { t: "Atrasos graves (6+ dias)", h: cliente.hoje.graves, a: cliente.agente.graves, d: "os que mais geram cancelamento e reclamação pública" },
+            { t: "Clientes que precisam reclamar", h: cliente.hoje.contatos, a: cliente.agente.contatos, d: "contatos no atendimento por causa de atraso" },
+            { t: "Compras canceladas por atraso", h: cliente.hoje.cancel, a: cliente.agente.cancel, d: "clientes que desistem do pedido" },
+          ].map((k) => {
+            const queda = k.h > 0 ? (k.h - k.a) / k.h : 0;
+            return (
+              <div key={k.t} className="rounded-xl border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">{k.t}</div>
+                <div className="num mt-1 text-lg font-semibold">{int(k.h)} → <span className="text-emerald-700">{int(k.a)}</span></div>
+                <div className="num text-xs font-medium text-emerald-700">{queda > 0 ? `−${Math.round(queda * 100)}%` : "="}</div>
+                <div className="mt-1 text-[11px] leading-tight text-slate-400">{k.d}</div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">Mesmo modelo dos valores em R$: atrasos medidos nos portais; chance de reclamar e de cancelar por dias de atraso conforme as regras do desafio.</p>
+      </section>
+
       {tk && (
         <p className="mt-2 text-xs text-slate-500">
           Por que 92%: no TikTok Shop ({pct(tk.fatia)} das vendas), se a loja entrega menos de {pct(tk.regua)} no prazo, a plataforma mostra menos os produtos e as vendas caem {pct(tk.corte)}.
