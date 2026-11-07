@@ -3,8 +3,8 @@
 import { useMemo, useRef, useState } from "react";
 import dadosJson from "@/data/radar.json";
 import {
-  type Dados, type Acao, type AcaoPrefixo, type Torre, type Roteamento, type Veredito, planoAcoes, resumir, recomendada, ehAcaoReal,
-  FAIXAS, PARAMS, veredito, valorRoteamentoAno,
+  type Dados, type Acao, type AcaoPrefixo, type Torre, type Roteamento, type Veredito, planoAcoes, recomendada, ehAcaoReal,
+  FAIXAS, veredito, valorRoteamentoAno,
 } from "@/lib/radar";
 import type { Proposta, Acionamento } from "@/lib/ferramentas";
 import diaSeguinteJson from "@/data/dia_seguinte.json";
@@ -77,12 +77,7 @@ export default function Painel() {
 
   const [comTiktok, setComTiktok] = useState(false); // padrão: número estável, sem a regra do TikTok (parâmetro da banca)
   const plano = useMemo(() => planoAcoes(dados, meta, queda, comTiktok), [meta, queda, comTiktok]);
-  const planoTk = useMemo(() => planoAcoes(dados, meta, queda, true), [meta, queda]);
-  const valorComTiktok = useMemo(() => resumir(planoTk, recomendada).valorLiquido + (planoTk.tiktok?.valorAno ?? 0), [planoTk]);
-  const pot = useMemo(() => resumir(plano, ehAcaoReal), [plano]);
-  const rec = useMemo(() => resumir(plano, recomendada), [plano]);
   const tk = plano.tiktok;
-  const valorTotal = rec.valorLiquido + (tk?.valorAno ?? 0);
 
   // ---------- agente ----------
   const [rodando, setRodando] = useState(false);
@@ -157,101 +152,45 @@ export default function Painel() {
   const torre = dados.torre;
   const multaTotal = torre.multaTransportadoras.reduce((s, m) => s + m.multaDevidaAno, 0);
   const comChamado = new Set(chamados.map((c) => c.id));
-  const atrasadosDe100 = Math.round((1 - plano.antes.noPrazo) * 100);
-
-  // ---------- experiência do cliente: hoje × com as ações recomendadas (mesmo modelo, sem número novo) ----------
-  const cliente = useMemo(() => {
-    const z = { atrasos: 0, graves: 0, contatos: 0, cancel: 0 };
-    const hoje = { ...z }, agente = { ...z };
-    for (const x of plano.prefixos) {
-      for (const [alvo, c] of [[hoje, x.antes], [agente, recomendada(x) ? x.depois : x.antes]] as const) {
-        alvo.atrasos += c.atrasos; alvo.cancel += c.cancelamentos; alvo.contatos += c.contato / PARAMS.custoContato;
-        alvo.graves += c.porFaixa["6-10"].atrasos + c.porFaixa[">10"].atrasos;
-      }
-    }
-    return { hoje, agente };
-  }, [plano]);
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">Radar de Prazo</h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Toda compra na Gocase vem com uma data prometida de entrega. Hoje <b>{atrasadosDe100} de cada 100 pedidos chegam atrasados</b>, e parte desses clientes cancela ou não volta.
-          Um agente de IA olha todo dia as 154 regiões do país e cada pedido em trânsito, resolve sozinho o que é rotina e leva ao gerente só as decisões que dão lucro.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Radar de Prazo</h1>
+          <p className="text-sm text-slate-500">Logística · Gocase e GoBeauté · {dia === 1 ? "segunda, 02/11" : "terça, 03/11 (simulado)"}</p>
+        </div>
+        <p className="text-xs text-slate-400">Última varredura do agente: {eventos.some((e) => e.tipo === "final") ? "agora" : "hoje, 07:00"}</p>
       </header>
 
-      {/* a história em 3 números */}
-      <section className="mt-5 grid items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Hoje</div>
-          <div className="num mt-1 text-4xl font-bold">{pct(plano.antes.noPrazo)}</div>
-          <div className="text-sm text-slate-600">dos pedidos chegam no dia prometido</div>
-          <div className="num mt-3 text-xs text-slate-500">{int(plano.antes.atrasos)} atrasos e {int(plano.antes.cancelamentos)} cancelamentos por ano · custo de {brl(plano.antes.total)}/ano</div>
+      <section className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs text-slate-500">Entregas no prazo · últimos 60 dias</div>
+          <div className="num mt-1 text-3xl font-semibold">{pct(plano.antes.noPrazo)}</div>
+          <div className={`text-xs ${plano.antes.noPrazo < 0.92 ? "text-rose-700" : "text-emerald-700"}`}>meta da política: 92% por região</div>
         </div>
-        <div className="hidden items-center text-3xl text-slate-300 lg:flex">→</div>
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5">
-          <div className="text-xs font-semibold uppercase tracking-wide text-sky-700">Com o agente</div>
-          <div className="num mt-1 text-4xl font-bold text-sky-900">{pct(rec.noPrazoDepois)}</div>
-          <div className="text-sm text-sky-900">dos pedidos no prazo{tk?.destravado ? `, acima da régua de ${pct(tk.regua)} do TikTok Shop` : ""}</div>
-          <div className="num mt-3 text-xs text-sky-800">−{int(rec.atrasosEvitados)} atrasos e −{int(rec.cancelamentosEvitados)} cancelamentos por ano · ações em {rec.prefixos} regiões</div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs text-slate-500">Pedidos parados há 3+ dias</div>
+          <div className="num mt-1 text-3xl font-semibold">{int(torre.emRisco.length)}</div>
+          <div className="text-xs text-slate-500">{int(torre.emRisco.filter((e) => e.vencido).length)} já passaram da data prometida</div>
         </div>
-        <div className="hidden items-center text-3xl text-slate-300 lg:flex">=</div>
-        <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-5">
-          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Quanto vale</div>
-          <div className="num mt-1 text-4xl font-bold text-emerald-900">{brl(valorTotal)}</div>
-          <div className="text-sm text-emerald-900">por ano, já descontado o que se perde</div>
-          {tk?.valorAno ? <div className="num mt-3 text-xs text-emerald-800">inclui {brl(tk.valorAno)} de vendas recuperadas no TikTok Shop (+{int(tk.pedidosRecuperadosAno)} pedidos/ano)</div>
-            : <div className="mt-3 text-xs text-emerald-800">só com dados medidos na base</div>}
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs text-slate-500">Regiões abaixo da meta</div>
+          <div className="num mt-1 text-3xl font-semibold">{plano.prefixos.filter((x) => x.acao !== "sem_dados" && x.noPrazoAntes < 0.92).length}<span className="text-base font-normal text-slate-400"> de 154</span></div>
+          <div className="text-xs text-slate-500">{lista.length} com ação do agente</div>
+        </div>
+        <div className={`rounded-xl border p-4 ${propostas.some((p) => !decisoes[p.id]) ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}>
+          <div className="text-xs text-slate-500">Decisões aguardando o gerente</div>
+          <div className="num mt-1 text-3xl font-semibold">{propostas.filter((p) => !decisoes[p.id]).length}</div>
+          <div className="text-xs text-slate-500">{propostas.length ? `valem ${brl(totalPropostas)}/ano` : "rode o agente para gerar"}</div>
         </div>
       </section>
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-        <button onClick={() => setComTiktok(!comTiktok)}
-          className={`rounded-full border px-3 py-1 ${comTiktok ? "border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800" : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"}`}>
-          {comTiktok ? "✓ Com o efeito TikTok Shop" : `+ Ver com o efeito TikTok Shop (${brl(valorComTiktok)}/ano)`}
-        </button>
-        <span className="text-slate-400">{comTiktok ? "Regra informada pela banca, não medida na base. Clique para voltar ao número estável." : "Opcional: regra informada pela banca (vendas no TikTok caem abaixo de 92% no prazo)."}</span>
-      </div>
-      {/* experiência do cliente */}
-      <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-semibold">Para o cliente (imagem da marca)</h2>
-          <span className="text-[11px] text-slate-400">por ano · hoje → com o agente</span>
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { t: "Pedidos que chegam atrasados", h: cliente.hoje.atrasos, a: cliente.agente.atrasos, d: "clientes que esperam além do prometido" },
-            { t: "Atrasos graves (6+ dias)", h: cliente.hoje.graves, a: cliente.agente.graves, d: "os que mais geram cancelamento e reclamação pública" },
-            { t: "Clientes que precisam reclamar", h: cliente.hoje.contatos, a: cliente.agente.contatos, d: "contatos no atendimento por causa de atraso" },
-            { t: "Compras canceladas por atraso", h: cliente.hoje.cancel, a: cliente.agente.cancel, d: "clientes que desistem do pedido" },
-          ].map((k) => {
-            const queda = k.h > 0 ? (k.h - k.a) / k.h : 0;
-            return (
-              <div key={k.t} className="rounded-xl border border-slate-200 p-3">
-                <div className="text-xs text-slate-500">{k.t}</div>
-                <div className="num mt-1 text-lg font-semibold">{int(k.h)} → <span className="text-emerald-700">{int(k.a)}</span></div>
-                <div className="num text-xs font-medium text-emerald-700">{queda > 0 ? `−${Math.round(queda * 100)}%` : "="}</div>
-                <div className="mt-1 text-[11px] leading-tight text-slate-400">{k.d}</div>
-              </div>
-            );
-          })}
-        </div>
-        <p className="mt-2 text-[11px] text-slate-400">Mesmo modelo dos valores em R$: atrasos medidos nos portais; chance de reclamar e de cancelar por dias de atraso conforme as regras do desafio.</p>
-      </section>
-
-      {tk && (
-        <p className="mt-2 text-xs text-slate-500">
-          Por que 92%: no TikTok Shop ({pct(tk.fatia)} das vendas), se a loja entrega menos de {pct(tk.regua)} no prazo, a plataforma mostra menos os produtos e as vendas caem {pct(tk.corte)}.
-          Regra informada pela banca. Chegar a 95% em todas as regiões é possível ({pct(pot.noPrazoDepois)}), mas obrigaria a prometer prazos maiores e perder {brl(-pot.conversao)} em vendas; o agente não recomenda.
-        </p>
-      )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-5">
         {/* ---------- esquerda: abas ---------- */}
         <div className="lg:col-span-3">
           <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm">
-            {([["regioes", "As 154 regiões"], ["pedidos", "Pedidos de hoje"], ["calculo", "Como calculamos"]] as [Aba, string][]).map(([k, t]) => (
+            {([["regioes", "Regiões"], ["pedidos", "Pedidos de hoje"]] as [Aba, string][]).map(([k, t]) => (
               <button key={k} onClick={() => setAba(k)} className={`flex-1 rounded-lg px-3 py-2 ${aba === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{t}</button>
             ))}
           </div>
@@ -259,7 +198,7 @@ export default function Painel() {
           {aba === "regioes" && (
             <section className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
               <h2 className="font-semibold">Situação de cada região (CEP)</h2>
-              <p className="text-xs text-slate-500">O agente analisa todas. Passe o mouse para ver o que cada situação significa.</p>
+              <p className="text-xs text-slate-500">Passe o mouse sobre cada situação para ver o significado.</p>
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {(Object.keys(SITUACAO) as Veredito[]).map((v) => (
                   <div key={v} title={SITUACAO[v].explica} className={`cursor-help rounded-lg border px-3 py-2 ${SITUACAO[v].cor}`}>
@@ -270,8 +209,7 @@ export default function Painel() {
               </div>
 
               <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
-                <b>Trocar de transportadora pedido a pedido:</b> em <b>{rotaPorP3.size} regiões</b> outra transportadora entrega melhor. O agente manda por ela {previaRota.roteados.length} de {int(previaRota.analisados)} pedidos novos ({Math.round(previaRota.parcela * 100)}%), sem mudar o prazo prometido:
-                ≈ −{int(previaRota.atrasosEvitadosAno)} atrasos/ano, {brl(previaRota.valorAno)}/ano e frete {previaRota.freteAno <= 0 ? `${brl(-previaRota.freteAno)} mais barato` : `${brl(previaRota.freteAno)} mais caro`} (estimado).
+                <b>Troca de transportadora hoje:</b> {previaRota.roteados.length} pedidos novos em {rotaPorP3.size} regiões vão por uma transportadora que entrega melhor ali, sem mudar o prazo prometido ao cliente.
                 <span className="mt-1 block text-sky-700">Principais: {[...rotaPorP3.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 4).map(([p3, r]) => { const px = plano.prefixos.find((q) => q.p3 === p3); return `${px?.cidade ?? p3} (${Object.keys(r.pares)[0]})`; }).join(" · ")}</span>
               </div>
 
@@ -291,14 +229,14 @@ export default function Painel() {
                   </tbody>
                 </table>
               </div>
-              <p className="mt-2 text-[11px] text-slate-400">Clique numa região para ver o detalhe. Valor negativo em vermelho: a ação sozinha dá prejuízo, mas entra no pacote que leva a loja acima de 92% no TikTok Shop.</p>
+              <p className="mt-2 text-[11px] text-slate-400">Clique numa região para ver o detalhe.</p>
             </section>
           )}
 
           {aba === "pedidos" && (
             <section className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
               <h2 className="font-semibold">Pedidos de hoje</h2>
-              <p className="text-xs text-slate-500">Aqui o agente age sozinho, sem esperar o gerente. (Listas de uma amostra de 1 em cada 6 pedidos.)</p>
+              <p className="text-xs text-slate-500">O agente age sozinho aqui, sem esperar o gerente.</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-500">Pedidos parados há 3+ dias</div>
@@ -309,12 +247,12 @@ export default function Painel() {
                   <div className="text-xs text-slate-500">Pedidos novos a despachar</div>
                   <div className="num text-2xl font-semibold">{int(torre.naoPostados.length)}</div>
                   <div className="mt-1 text-xs font-medium text-emerald-700">{roteados ? `Agente trocou a transportadora de ${roteados.length}` : `${previaRota.roteados.length} (${Math.round(previaRota.parcela * 100)}%) podem ir por transportadora melhor`}</div>
-                  <div className="mt-1 text-[11px] text-slate-500">≈ −{int(previaRota.atrasosEvitadosAno)} atrasos/ano · {brl(previaRota.valorAno)}/ano · frete {previaRota.freteAno <= 0 ? `${brl(-previaRota.freteAno)} mais barato` : `${brl(previaRota.freteAno)} mais caro`} (estimado)</div>
+
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-500">Multa de atraso a cobrar</div>
                   <div className="num text-2xl font-semibold">{brl(multaTotal)}<span className="text-xs font-normal">/ano</span></div>
-                  <div className="mt-1 text-xs text-slate-500">previstas nos contratos e não cobradas</div>
+                  <div className="mt-1 text-xs text-slate-500">prevista nos contratos, ainda não cobrada</div>
                 </div>
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -347,7 +285,7 @@ export default function Painel() {
             </section>
           )}
 
-          {aba === "calculo" && <ComoCalculamos plano={plano} meta={meta} setMeta={setMeta} queda={queda} setQueda={setQueda} />}
+
         </div>
 
         {/* ---------- direita: agente e gerente ---------- */}
@@ -462,7 +400,17 @@ export default function Painel() {
         </div>
       </div>
 
-      <footer className="mt-8 text-xs text-slate-400">Dados fictícios do GoHacks Talent 2026 · Gocase e GoBeauté · detalhes na aba “Como calculamos”.</footer>
+      <details className="mt-8 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+        <summary className="cursor-pointer font-semibold text-slate-600">Configurações do agente e metodologia</summary>
+        <div className="mt-3 flex flex-wrap items-end gap-4">
+          <label className="flex items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox" checked={comTiktok} onChange={(e) => setComTiktok(e.target.checked)} />
+            Considerar a régua de 92% do TikTok Shop (regra informada pela banca)
+          </label>
+        </div>
+        <ComoCalculamos plano={plano} meta={meta} setMeta={setMeta} queda={queda} setQueda={setQueda} />
+      </details>
+      <footer className="mt-4 text-xs text-slate-400">Dados fictícios do GoHacks Talent 2026.</footer>
     </main>
   );
 }
