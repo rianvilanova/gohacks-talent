@@ -237,7 +237,7 @@ export default function Painel() {
                   <li>Abrir incidente com a transportadora que falha numa região</li>
                   <li>Trocar a transportadora padrão da região</li>
                 </ul>
-                <div className="mt-1 text-violet-800">Essas mudanças mexem no site: o agente propõe, o gerente aprova (painel à direita).</div>
+                <div className="mt-1 text-violet-800">Essas mudanças mexem no site: o agente propõe, o gerente aprova (“Decisões para o gerente”, à direita).</div>
               </div>
               <h2 className="font-semibold">Situação de cada região (CEP)</h2>
               <p className="text-xs text-slate-500">Passe o mouse sobre cada situação para ver o significado.</p>
@@ -403,66 +403,6 @@ export default function Painel() {
           )}
 
           <section className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <h2 className="font-semibold">Agente de IA</h2>
-                <p className="text-xs text-slate-500">{dia === 2 ? "Rotina da manhã: trata o que mudou desde ontem." : "Todo dia às 7h: age nos pedidos de ontem. Toda semana: revisa o prazo das regiões."}</p>
-              </div>
-              <button disabled={rodando} onClick={() => rodarAgente()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-                {rodando ? "Trabalhando…" : "▶ Rodar agente"}
-              </button>
-            </div>
-            <div className="mt-3 max-h-[28rem] space-y-4 overflow-auto text-sm">
-              {rodadas.length === 0 && !rodando && <p className="text-slate-400">Clique em “Rodar agente” para ver o que ele faz, passo a passo (~1 min), ou faça uma pergunta abaixo.</p>}
-              {rodadas.map((r, i) => {
-                const ultima = i === rodadas.length - 1;
-                const passos = r.eventos.filter((e) => e.tipo === "ferramenta" || e.tipo === "pensamento");
-                const consultas = passos.filter((e) => e.tipo === "ferramenta").length;
-                const respostas = r.eventos.filter((e) => e.tipo === "final" || e.tipo === "erro");
-                return (
-                  <div key={i} className="space-y-2">
-                    {r.pergunta ? (
-                      <div className="ml-8 rounded-lg rounded-tr-none bg-slate-900 px-3 py-2 text-white">
-                        <div className="text-[11px] text-slate-300">Você perguntou</div>
-                        {r.pergunta}
-                      </div>
-                    ) : <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Varredura do dia</div>}
-                    {passos.length > 0 && (
-                      <details open={ultima && rodando} className="text-xs text-slate-500">
-                        <summary className="cursor-pointer">Como o agente chegou nisso ({consultas} consulta{consultas === 1 ? "" : "s"} aos dados)</summary>
-                        <ol className="mt-1 space-y-1 border-l border-slate-200 pl-3">
-                          {passos.map((e, j) => <li key={j} className={e.tipo === "pensamento" ? "text-slate-400" : "text-slate-600"}>{e.tipo === "ferramenta" ? <>✓ {passoDoAgente(e)}</> : "texto" in e ? e.texto : null}</li>)}
-                        </ol>
-                      </details>
-                    )}
-                    {ultima && rodando && <p className="animate-pulse text-xs text-slate-400">{r.pergunta ? "Consultando os dados para responder…" : "Trabalhando…"}</p>}
-                    {respostas.map((e, j) => "texto" in e && (
-                      e.tipo === "erro" ? <p key={j} className="text-rose-700">{e.texto}</p> : (
-                        <div key={j} className="rounded-lg rounded-tl-none border border-emerald-200 bg-emerald-50/60 p-3 text-slate-800">
-                          <div className="mb-1 text-[11px] font-medium text-emerald-800">{r.pergunta ? "Resposta do agente" : "Resumo do agente"}</div>
-                          <div className="whitespace-pre-line">{comNegrito(e.texto)}</div>
-                        </div>
-                      )
-                    ))}
-                  </div>
-                );
-              })}
-              <div ref={fimRef} />
-            </div>
-            <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (pergunta.trim() && !rodando) rodarAgente(pergunta.trim()); }}>
-              <input value={pergunta} onChange={(e) => setPergunta(e.target.value)} placeholder="Pergunte ao agente sobre uma região, transportadora ou pedido"
-                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-              <button disabled={rodando || !pergunta.trim()} className="rounded-lg border border-slate-300 px-3 text-sm disabled:opacity-50">Perguntar</button>
-            </form>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {PERGUNTAS_PRONTAS.map((q) => (
-                <button key={q} disabled={rodando} onClick={() => rodarAgente(q)} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-200 disabled:opacity-50">{q}</button>
-              ))}
-            </div>
-            {uso && <p className="mt-2 text-[11px] text-slate-400">IA: {uso}</p>}
-          </section>
-
-          <section className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex items-baseline justify-between">
               <h2 className="font-semibold">Decisões para o gerente</h2>
               {propostas.length > 0 && <span className="num text-sm text-slate-600">{brl(totalPropostas)}/ano</span>}
@@ -509,6 +449,67 @@ export default function Painel() {
           </section>
         </div>
       </div>
+
+      {/* ---------- faixa inteira: agente de IA ---------- */}
+      <section className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold">Agente de IA</h2>
+            <p className="text-xs text-slate-500">{dia === 2 ? "Rotina da manhã: trata o que mudou desde ontem." : "Todo dia às 7h: age nos pedidos de ontem. Toda semana: revisa o prazo das regiões."}</p>
+          </div>
+          <button disabled={rodando} onClick={() => rodarAgente()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+            {rodando ? "Trabalhando…" : "▶ Rodar agente"}
+          </button>
+        </div>
+        <div className="mt-3 max-h-[32rem] space-y-4 overflow-auto text-sm">
+          {rodadas.length === 0 && !rodando && <p className="text-slate-400">Clique em “Rodar agente” para ver o que ele faz, passo a passo (~1 min), ou faça uma pergunta abaixo.</p>}
+          {rodadas.map((r, i) => {
+            const ultima = i === rodadas.length - 1;
+            const passos = r.eventos.filter((e) => e.tipo === "ferramenta" || e.tipo === "pensamento");
+            const consultas = passos.filter((e) => e.tipo === "ferramenta").length;
+            const respostas = r.eventos.filter((e) => e.tipo === "final" || e.tipo === "erro");
+            return (
+              <div key={i} className="space-y-2">
+                {r.pergunta ? (
+                  <div className="ml-8 rounded-lg rounded-tr-none bg-slate-900 px-3 py-2 text-white">
+                    <div className="text-[11px] text-slate-300">Você perguntou</div>
+                    {r.pergunta}
+                  </div>
+                ) : <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Varredura do dia</div>}
+                {passos.length > 0 && (
+                  <details open={ultima && rodando} className="text-xs text-slate-500">
+                    <summary className="cursor-pointer">Como o agente chegou nisso ({consultas} consulta{consultas === 1 ? "" : "s"} aos dados)</summary>
+                    <ol className="mt-1 space-y-1 border-l border-slate-200 pl-3">
+                      {passos.map((e, j) => <li key={j} className={e.tipo === "pensamento" ? "text-slate-400" : "text-slate-600"}>{e.tipo === "ferramenta" ? <>✓ {passoDoAgente(e)}</> : "texto" in e ? e.texto : null}</li>)}
+                    </ol>
+                  </details>
+                )}
+                {ultima && rodando && <p className="animate-pulse text-xs text-slate-400">{r.pergunta ? "Consultando os dados para responder…" : "Trabalhando…"}</p>}
+                {respostas.map((e, j) => "texto" in e && (
+                  e.tipo === "erro" ? <p key={j} className="text-rose-700">{e.texto}</p> : (
+                    <div key={j} className="rounded-lg rounded-tl-none border border-emerald-200 bg-emerald-50/60 p-3 text-slate-800">
+                      <div className="mb-1 text-[11px] font-medium text-emerald-800">{r.pergunta ? "Resposta do agente" : "Resumo do agente"}</div>
+                      <div className="whitespace-pre-line">{comNegrito(e.texto)}</div>
+                    </div>
+                  )
+                ))}
+              </div>
+            );
+          })}
+          <div ref={fimRef} />
+        </div>
+        <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (pergunta.trim() && !rodando) rodarAgente(pergunta.trim()); }}>
+          <input value={pergunta} onChange={(e) => setPergunta(e.target.value)} placeholder="Pergunte ao agente sobre uma região, transportadora ou pedido"
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+          <button disabled={rodando || !pergunta.trim()} className="rounded-lg border border-slate-300 px-3 text-sm disabled:opacity-50">Perguntar</button>
+        </form>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {PERGUNTAS_PRONTAS.map((q) => (
+            <button key={q} disabled={rodando} onClick={() => rodarAgente(q)} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-200 disabled:opacity-50">{q}</button>
+          ))}
+        </div>
+        {uso && <p className="mt-2 text-[11px] text-slate-400">IA: {uso}</p>}
+      </section>
 
       <details className="mt-8 rounded-xl border border-slate-200 bg-white p-4 text-sm">
         <summary className="cursor-pointer font-semibold text-slate-600">Configurações do agente e metodologia</summary>
