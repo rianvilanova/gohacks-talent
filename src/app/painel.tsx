@@ -6,7 +6,8 @@ import {
   type Dados, type Acao, type AcaoPrefixo, type Torre, type Roteamento, type Veredito, planoAcoes, resumir, recomendada, ehAcaoReal,
   FAIXAS, ROTULO_ACAO, ROTULO_VEREDITO, veredito, rotearNaoPostados,
 } from "@/lib/radar";
-import type { Proposta } from "@/lib/ferramentas";
+import type { Proposta, Acionamento } from "@/lib/ferramentas";
+import diaSeguinteJson from "@/data/dia_seguinte.json";
 
 const dados = dadosJson as unknown as Dados & { torre: Torre };
 const COR_VEREDITO: Record<Veredito, string> = {
@@ -15,6 +16,8 @@ const COR_VEREDITO: Record<Veredito, string> = {
   transportadora_melhor: "bg-violet-50 text-violet-700 border-violet-200", poucos_dados: "bg-slate-50 text-slate-500 border-slate-200",
   monitorar: "bg-orange-50 text-orange-700 border-orange-200",
 };
+const ds = diaSeguinteJson as { resumo: { respostas: Record<string, number>; novosParados: number }; alerta: { prefixo: string; cidade: string; transportadora: string; entreguesUltimos3Dias: number; noPrazoUltimos3Dias: number }; mensagemPortal: { transportadora: string; texto: string } };
+const ROTULO_DESTINO: Record<string, string> = { gerente_logistica: "Gerente de logística", financeiro: "Financeiro", atendimento_cx: "Atendimento (CX)", gerente_contas_transportadora: "Gerente de contas da transportadora", seguranca: "Segurança" };
 type Chamado = { id: string; transportadora: string; cod: string; motivo: string };
 
 // ---------- formatação ----------
@@ -39,7 +42,7 @@ const COR_ACAO: Record<Acao, string> = {
 type Evento =
   | { tipo: "ferramenta"; nome: string; args: Record<string, unknown>; resultado: unknown }
   | { tipo: "pensamento" | "final" | "erro"; texto: string }
-  | { tipo: "fim"; propostas: Proposta[]; chamados?: Chamado[]; roteamento?: Roteamento[]; uso: { modelo: string; tokensEntrada: number; tokensSaida: number } };
+  | { tipo: "fim"; propostas: Proposta[]; acionamentos?: Acionamento[]; chamados?: Chamado[]; roteamento?: Roteamento[]; uso: { modelo: string; tokensEntrada: number; tokensSaida: number } };
 
 function rotuloFerramenta(e: Extract<Evento, { tipo: "ferramenta" }>) {
   const a = e.args;
@@ -48,6 +51,8 @@ function rotuloFerramenta(e: Extract<Evento, { tipo: "ferramenta" }>) {
     case "listar_prefixos": return `Listou prefixos por ${a.ordem === "pior_prazo" ? "pior prazo" : a.ordem === "prejuizo" ? "ações que dariam prejuízo" : "valor"}${a.acao ? ` (${ROTULO_ACAO[a.acao as Acao]})` : ""}`;
     case "diagnosticar_prefixo": return `Diagnosticou o prefixo ${a.prefixo}`;
     case "simular_margem": return `Simulou margem de ${a.margem} dia(s) no prefixo ${a.prefixo}`;
+    case "novidades_do_dia": return "Leu as novidades desde ontem: respostas dos chamados, envios parados, alertas e mensagens";
+    case "acionar_pessoa": return `Acionou ${ROTULO_DESTINO[String(a.destino)] ?? a.destino} (urgência ${a.urgencia})`;
     case "torre_de_controle": return "Abriu a torre de controle: envios parados, envios novos e multa";
     case "abrir_chamados_portal": { const r = e.resultado as { abertos_agora?: number }; return `Abriu ${r?.abertos_agora ?? 0} chamados nos portais das transportadoras`; }
     case "rotear_envios_novos": { const r = e.resultado as { roteados?: number; envios_analisados?: number }; return `Roteou ${r?.roteados ?? 0} de ${r?.envios_analisados ?? 0} envios novos`; }
@@ -85,16 +90,27 @@ export default function Painel() {
   const [uso, setUso] = useState<string>("");
   const [chamados, setChamados] = useState<Chamado[]>([]);
   const [roteados, setRoteados] = useState<Roteamento[] | null>(null);
+  const [dia, setDia] = useState<1 | 2>(1);
+  const [ontem, setOntem] = useState<Proposta[]>([]); // propostas aprovadas no dia 02/11
+  const [acionamentos, setAcionamentos] = useState<Acionamento[]>([]);
+
+  function irParaDiaSeguinte() {
+    setOntem(propostas.filter((p) => decisoes[p.id] === "aprovada"));
+    setDia(2); setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setEventos([]); setAcionamentos([]); setUso("");
+  }
+  function voltarParaHoje() {
+    setDia(1); setOntem([]); setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setEventos([]); setAcionamentos([]); setUso("");
+  }
   const [pergunta, setPergunta] = useState("");
   const fimRef = useRef<HTMLDivElement>(null);
 
   async function rodarAgente(textoPergunta?: string) {
     setRodando(true); setEventos([]); setUso("");
-    if (!textoPergunta) { setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); }
+    if (!textoPergunta) { setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setAcionamentos([]); }
     try {
       const r = await fetch("/api/agente", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meta, sensibilidade: queda, pergunta: textoPergunta }),
+        body: JSON.stringify({ meta, sensibilidade: queda, pergunta: textoPergunta, dia, aprovadasOntem: ontem.map((p) => `${p.id} ${p.regiao}: ${p.mudanca}`) }),
       });
       if (!r.ok || !r.body) {
         const j = await r.json().catch(() => ({}));
@@ -114,6 +130,7 @@ export default function Painel() {
             if (ev.propostas.length) setPropostas(ev.propostas);
             if (ev.chamados?.length) setChamados(ev.chamados);
             if (ev.roteamento?.length) setRoteados(ev.roteamento);
+            if (ev.acionamentos?.length) setAcionamentos(ev.acionamentos);
             setUso(`${ev.uso.modelo} · entrada ${int(ev.uso.tokensEntrada)} tok · saída ${int(ev.uso.tokensSaida)} tok`);
           } else setEventos((x) => [...x, ev]);
           setTimeout(() => fimRef.current?.scrollIntoView({ block: "nearest" }), 50);
@@ -306,11 +323,45 @@ export default function Painel() {
 
         {/* coluna direita: agente */}
         <div className="space-y-6 lg:col-span-2">
+          <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
+            <button onClick={voltarParaHoje} className={`flex-1 rounded-lg px-3 py-2 ${dia === 1 ? "bg-slate-900 text-white" : "text-slate-600"}`}>02/11 · hoje</button>
+            <button onClick={irParaDiaSeguinte} disabled={rodando} className={`flex-1 rounded-lg px-3 py-2 ${dia === 2 ? "bg-fuchsia-700 text-white" : "text-slate-600"}`}>03/11 · dia seguinte (simulado)</button>
+          </div>
+
+          {dia === 2 && (
+            <section className="rounded-xl border border-fuchsia-300 bg-fuchsia-50/40 p-4 text-sm">
+              <h2 className="font-semibold">Caixa do gerente · 03/11, 7h</h2>
+              <p className="text-[11px] text-fuchsia-800">Dia SIMULADO para demonstração (data/injetado/dia_seguinte.json); não entra no placar.</p>
+              <div className="mt-2 text-xs font-medium text-slate-600">Em vigor desde ontem (aprovado por você)</div>
+              {ontem.length ? <ul className="mt-1 list-disc pl-5 text-xs">{ontem.map((p) => <li key={p.id}>{p.regiao}: {p.mudanca}</li>)}</ul>
+                : <p className="mt-1 text-xs text-slate-500">Nenhuma aprovação ontem. (Para a demo: no dia 02/11, rode a varredura e aprove as propostas antes de avançar.)</p>}
+              <div className="mt-3 text-xs font-medium text-slate-600">O que aconteceu durante a noite</div>
+              <ul className="mt-1 space-y-0.5 text-xs">
+                <li>📨 Respostas aos 80 chamados de ontem: {ds.resumo.respostas.nova_previsao ?? 0} com nova previsão · {ds.resumo.respostas.entregue ?? 0} entregues · {ds.resumo.respostas.sem_resposta ?? 0} sem resposta em 24 h · {ds.resumo.respostas.extraviado ?? 0} extraviados</li>
+                <li>⏸ {ds.resumo.novosParados} envios pararam desde ontem</li>
+                <li>📉 Alerta: {ds.alerta.cidade} ({ds.alerta.prefixo}) com {ds.alerta.transportadora}: {ds.alerta.noPrazoUltimos3Dias} de {ds.alerta.entreguesUltimos3Dias} no prazo nos últimos 3 dias</li>
+                <li>⚠️ Mensagem no portal da {ds.mensagemPortal.transportadora}: “{ds.mensagemPortal.texto}”</li>
+              </ul>
+              {acionamentos.length > 0 && (
+                <>
+                  <div className="mt-3 text-xs font-medium text-slate-600">Precisa de você ou de alguém do time</div>
+                  <ul className="mt-1 space-y-1 text-xs">
+                    {acionamentos.map((a, i) => (
+                      <li key={i} className="rounded border border-slate-200 bg-white p-2">
+                        <b>{ROTULO_DESTINO[a.destino] ?? a.destino}</b> <span className={a.urgencia === "alta" ? "text-rose-700" : "text-slate-500"}>· urgência {a.urgencia}</span><br />{a.motivo}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </section>
+          )}
+
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <h2 className="font-semibold">Agente</h2>
-                <p className="text-xs text-slate-500">Roda sozinho todo dia às 7h. Aqui você roda agora.</p>
+                <p className="text-xs text-slate-500">{dia === 2 ? "Varredura da manhã de 03/11: trata o que mudou desde ontem." : "Roda sozinho todo dia às 7h. Aqui você roda agora."}</p>
               </div>
               <button disabled={rodando} onClick={() => rodarAgente()}
                 className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
@@ -346,7 +397,7 @@ export default function Painel() {
               </div>
             )}
             <div className="mt-3 space-y-3">
-              {propostas.length === 0 && <p className="text-sm text-slate-400">Rode a varredura para o agente abrir as propostas.</p>}
+              {propostas.length === 0 && <p className="text-sm text-slate-400">{dia === 2 && eventos.some((e) => e.tipo === "final") ? "Nenhuma proposta nova hoje: o que foi aprovado ontem segue em vigor." : "Rode a varredura para o agente abrir as propostas."}</p>}
               {propostas.map((p) => (
                 <div key={p.id} className={`rounded-lg border p-3 text-sm ${decisoes[p.id] === "aprovada" ? "border-emerald-300 bg-emerald-50/50" : decisoes[p.id] === "recusada" ? "border-slate-200 opacity-50" : "border-slate-200"}`}>
                   <div className="flex items-start justify-between gap-2">
