@@ -419,7 +419,11 @@ export type EnvioRisco = { id: string; p3: string; uf: string; t: string; cod: s
 export type MultaTransp = { transportadora: string; metaContrato: number; multaPctDia: number; tetoPct: number; noPrazoEntregues: number; atrasadosAno: number; multaDevidaAno: number };
 export type Torre = { naoPostados: [string, string, string, string, number, string][]; emRisco: EnvioRisco[]; multaTransportadoras: MultaTransp[] };
 
-export type Roteamento = { id: string; p3: string; uf: string; de: string; para: string; noPrazoDe: number; noPrazoPara: number; freteExtra: number };
+export type Roteamento = {
+  id: string; p3: string; uf: string; de: string; para: string; noPrazoDe: number; noPrazoPara: number; freteExtra: number;
+  // ganho esperado por pedido: (queda na chance de atrasar) x (custo de um atraso na região), menos o frete a mais
+  ganhoAtendimento: number; ganhoCancelamento: number; ganhoRecompra: number; ganhoRs: number;
+};
 
 /**
  * rotear_envio para os envios ainda não postados: troca para a transportadora que atende a região
@@ -456,7 +460,10 @@ export function rotearNaoPostados(d: Dados & { torre: Torre }, crit = CRITERIO_R
     if (usado + 1 > 0.4 * (totalUfDia.get(k) ?? 0)) { bloqueadosLimite++; continue; }
     usadoUfDia.set(k, usado + 1);
     const fd = p.fretePorTransp[t], fp = p.fretePorTransp[melhor.t];
-    roteados.push({ id, p3, uf, de: t, para: melhor.t, noPrazoDe: atual, noPrazoPara: melhor.r, freteExtra: fd && fp ? fp - fd : 0 });
+    const dp = melhor.r - atual, fe = fd && fp ? fp - fd : 0, n = c.atrasos || 1;
+    const gA = dp * c.contato / n, gC = dp * c.cancelamento / n, gR = dp * c.recompra / n;
+    roteados.push({ id, p3, uf, de: t, para: melhor.t, noPrazoDe: atual, noPrazoPara: melhor.r, freteExtra: fe,
+      ganhoAtendimento: gA, ganhoCancelamento: gC, ganhoRecompra: gR, ganhoRs: gA + gC + gR - fe });
   }
   const atrasosEvitadosFila = roteados.reduce((s, r) => s + (r.noPrazoPara - r.noPrazoDe), 0);
   return { analisados, roteados, bloqueadosLimite, atrasosEvitadosFila, freteExtraFila: roteados.reduce((s, r) => s + r.freteExtra, 0) };
