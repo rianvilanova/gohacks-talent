@@ -20,6 +20,7 @@ export type Prefixo = {
 
 export type Dados = {
   corteBacktest: string; enviosNaAmostra: number; enviosComEntrega: number; enviosPorAno: number;
+  tiktok?: { fatia_das_vendas: number; corte_das_vendas_abaixo_da_regua: number; regua_cumprimento_loja: number; _fonte?: string };
   curvaConversao: Record<string, number>; // gap de prazo vs concorrente (dias) -> conversão relativa ao gap 0, medida no checkout
   geral: { todos: Hist; treino: Hist; teste: Hist };
   porTransp: Record<string, Hist>;
@@ -35,6 +36,7 @@ export const PARAMS = {
   minEnviosPrefixo: 30,
   // Estimativa a partir do caso real de SP (01/10: +2 dias -> conversão 39,4% -> 34,3%, -12,9%): ~6,5% por dia.
   quedaConversaoPorDia: 0.065,
+  folgaReguaTiktok: 0.005, // mira 92,5% para não ficar no fio da régua de 92%
 };
 
 export const FAIXAS = [
@@ -189,6 +191,16 @@ export type AcaoPrefixo = {
   freteExtra: number;
   valorLiquido: number; // economiaTotal + conversao - freteExtra
   antes: Custo; depois: Custo;
+  selecionada: boolean; // entra no plano recomendado
+  peloTiktok: boolean; // entrou só para a loja passar da régua do TikTok Shop
+};
+
+export type EfeitoTiktok = {
+  fatia: number; corte: number; regua: number;
+  noPrazoLojaHoje: number; noPrazoLojaPlano: number;
+  capadoHoje: boolean; destravado: boolean;
+  pedidosRecuperadosAno: number; valorAno: number; // margem de contribuição recuperada ao sair do corte
+  custoDasAcoesExtras: number; prefixosExtras: number;
 };
 
 export type PlanoAcoes = {
@@ -198,6 +210,7 @@ export type PlanoAcoes = {
   economiaDireta: number; economiaTotal: number; conversao: number; freteExtra: number; valorLiquido: number;
   contagem: Record<Acao, number>;
   prefixos: AcaoPrefixo[];
+  tiktok: EfeitoTiktok | null;
 };
 
 /** Menor margem absoluta (0..max) que leva o histograma base à meta; null se nenhuma chega. */
@@ -210,8 +223,10 @@ function margemParaMeta(b: Hist, meta: number, max: number): number | null {
  * Para cada prefixo: aprende no treino a menor margem que cumpre a meta (pode ser menor que a atual)
  * e se outra transportadora que atende a região cumpre com menos margem; avalia no teste e anualiza.
  */
-export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1): PlanoAcoes {
+export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1, usarTiktok = true): PlanoAcoes {
   const fator = fatorAno(d);
+  const tk = usarTiktok && d.tiktok ? d.tiktok : null;
+  const fatiaSite = 1 - (tk?.fatia_das_vendas ?? 0); // a curva de conversão é do checkout do site
   const lista: AcaoPrefixo[] = [];
   const hsAntes: Hist[] = [], hsDepois: Hist[] = [];
   for (const p of d.prefixos) {
@@ -245,7 +260,7 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1): PlanoAcoes
     }
     const depois = custo(hDepois, fator);
     // conversão: curva medida no checkout (nosso prazo vs concorrentes)
-    const conversao = prazo !== null && m !== cur ? efeitoConversao(d, p, m - cur, enviosAno, sensibilidade) : 0;
+    const conversao = prazo !== null && m !== cur ? efeitoConversao(d, p, m - cur, enviosAno * fatiaSite, sensibilidade) : 0;
     void vm;
     const economiaDireta = antes.direto - depois.direto, economiaTotal = antes.total - depois.total;
     hsAntes.push(p.teste); hsDepois.push(hDepois);
@@ -258,7 +273,45 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1): PlanoAcoes
       atrasosEvitados: antes.atrasos - depois.atrasos, cancelamentosEvitados: antes.cancelamentos - depois.cancelamentos,
       economiaDireta, economiaRecompra: economiaTotal - economiaDireta, economiaTotal,
       conversao, freteExtra, valorLiquido: economiaTotal + conversao - freteExtra, antes, depois,
+      selecionada: false, peloTiktok: false,
     });
+  }
+
+  // ---- seleção: primeiro tudo que tem saldo positivo ----
+  const real = (x: AcaoPrefixo) => x.acao !== "manter" && x.acao !== "sem_dados";
+  for (const x of lista) x.selecionada = real(x) && x.valorLiquido > 0;
+  const totEnv = lista.reduce((a, x) => a + x.antes.envios, 0);
+  const lojaNoPrazo = (sel: (x: AcaoPrefixo) => boolean) => lista.reduce((a, x) => a + (sel(x) ? x.depois : x.antes).noPrazo * x.antes.envios, 0) / totEnv;
+  const lojaHoje = lojaNoPrazo(() => false);
+  let tiktok: EfeitoTiktok | null = null;
+  if (tk) {
+    // TikTok Shop: abaixo da régua (loja inteira) as vendas lá são cortadas. Passar da régua recupera esse corte.
+    const pedidosAno = totEnv;
+    const vmLoja = lista.reduce((a, x) => a + x.antes.envios * valorMedio(d.prefixos.find((p) => p.p3 === x.p3)!.teste), 0) / totEnv;
+    const recuperados = pedidosAno * tk.fatia_das_vendas * (1 / (1 - tk.corte_das_vendas_abaixo_da_regua) - 1);
+    const valorTiktok = recuperados * PARAMS.margemContribuicao * vmLoja;
+    // se as ações positivas não bastam, adiciona as que custam menos por atraso evitado até passar da régua
+    const extras: AcaoPrefixo[] = [];
+    const alvo = tk.regua_cumprimento_loja + PARAMS.folgaReguaTiktok; // folga: a régua é medida pela plataforma, não por nós
+    if (lojaNoPrazo((x) => x.selecionada) < alvo) {
+      const cand = lista.filter((x) => real(x) && !x.selecionada && x.atrasosEvitados > 0)
+        .sort((a, b) => b.valorLiquido / b.atrasosEvitados - a.valorLiquido / a.atrasosEvitados);
+      for (const x of cand) {
+        x.selecionada = true; extras.push(x);
+        if (lojaNoPrazo((y) => y.selecionada) >= alvo) break;
+      }
+    }
+    const passou = lojaNoPrazo((x) => x.selecionada) >= alvo;
+    const custoExtras = extras.reduce((a, x) => a + x.valorLiquido, 0);
+    const vale = passou && valorTiktok + custoExtras > 0;
+    if (!vale) for (const x of extras) x.selecionada = false; else for (const x of extras) x.peloTiktok = true;
+    tiktok = {
+      fatia: tk.fatia_das_vendas, corte: tk.corte_das_vendas_abaixo_da_regua, regua: tk.regua_cumprimento_loja,
+      noPrazoLojaHoje: lojaHoje, noPrazoLojaPlano: lojaNoPrazo((x) => x.selecionada),
+      capadoHoje: lojaHoje < tk.regua_cumprimento_loja, destravado: vale || (lojaHoje < tk.regua_cumprimento_loja && lojaNoPrazo((x) => x.selecionada) >= tk.regua_cumprimento_loja),
+      pedidosRecuperadosAno: vale ? recuperados : 0, valorAno: vale ? valorTiktok : 0,
+      custoDasAcoesExtras: vale ? custoExtras : 0, prefixosExtras: vale ? extras.length : 0,
+    };
   }
   const A = custo(soma(...hsAntes), fator), D = custo(soma(...hsDepois), fator);
   const s = (k: "conversao" | "freteExtra") => lista.reduce((a, x) => a + x[k], 0);
@@ -271,6 +324,7 @@ export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1): PlanoAcoes
     economiaDireta: A.direto - D.direto, economiaTotal: A.total - D.total, conversao, freteExtra,
     valorLiquido: A.total - D.total + conversao - freteExtra, contagem,
     prefixos: lista.sort((a, b) => b.valorLiquido - a.valorLiquido),
+    tiktok,
   };
 }
 
@@ -292,7 +346,7 @@ export function resumir(plano: PlanoAcoes, incluir: (x: AcaoPrefixo) => boolean)
 }
 
 export const ehAcaoReal = (x: AcaoPrefixo) => x.acao !== "manter" && x.acao !== "sem_dados";
-export const recomendada = (x: AcaoPrefixo) => ehAcaoReal(x) && x.valorLiquido > 0;
+export const recomendada = (x: AcaoPrefixo) => x.selecionada;
 
 export const ROTULO_ACAO: Record<Acao, string> = {
   manter: "Manter", mais_margem: "+ prazo", menos_margem: "− prazo", rotear: "Rotear", incidente: "Incidente", sem_dados: "Poucos dados",

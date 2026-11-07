@@ -1,0 +1,9 @@
+{
+  "_fonte": "Parâmetro informado por integrante da banca no GoHacks Talent 2026 (07/11). NÃO vem da base fictícia original: a base não tem canal de venda.",
+  "_regra": "No TikTok Shop, quando o cumprimento de prazo da loja inteira fica abaixo da régua, o algoritmo da plataforma corta as vendas.",
+  "canal": "TikTok Shop",
+  "fatia_das_vendas": 0.20,
+  "corte_das_vendas_abaixo_da_regua": 0.15,
+  "regua_cumprimento_loja": 0.92,
+  "medido_por": "loja inteira (todos os pedidos)"
+}

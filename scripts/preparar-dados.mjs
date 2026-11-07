@@ -247,6 +247,8 @@ const saida = {
   enviosPorAno: Math.round((envios.length * 6 * 365) / 90), // amostra 1 em 6, 90 dias
   curvaConversao, geral, porTransp, prefixos,
   torre: { naoPostados, emRisco, multaTransportadoras },
+  // parâmetro injetado (informado pela banca), mantido separado dos dados medidos
+  tiktok: JSON.parse(fs.readFileSync(path.resolve("data/injetado/tiktok_shop.json"), "utf8")),
 };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(saida));

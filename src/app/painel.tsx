@@ -125,8 +125,10 @@ export default function Painel() {
   }
 
   const aprovadas = propostas.filter((p) => decisoes[p.id] === "aprovada");
-  const valorAprovado = aprovadas.reduce((s, p) => s + p.valorLiquidoAno, 0);
-  const totalPropostas = propostas.reduce((s, p) => s + p.valorLiquidoAno, 0);
+  const pacoteTiktok = propostas.filter((p) => p.prefixosPacoteTiktok > 0);
+  const tiktokAprovado = !!plano.tiktok?.valorAno && pacoteTiktok.length > 0 && pacoteTiktok.every((p) => decisoes[p.id] === "aprovada");
+  const valorAprovado = aprovadas.reduce((s, p) => s + p.valorLiquidoAno, 0) + (tiktokAprovado ? plano.tiktok!.valorAno : 0);
+  const totalPropostas = propostas.reduce((s, p) => s + p.valorLiquidoAno, 0) + (pacoteTiktok.length ? plano.tiktok?.valorAno ?? 0 : 0);
 
   const lista = useMemo(() => {
     let l = plano.prefixos;
@@ -161,13 +163,17 @@ export default function Painel() {
         <Kpi titulo="No prazo hoje" valor={pct(plano.antes.noPrazo)} sub={`${int(plano.antes.atrasos)} atrasos e ${int(plano.antes.cancelamentos)} cancelamentos por ano`} />
         <Kpi titulo="Custo dos atrasos hoje" valor={brl(plano.antes.total)} sub={`por ano · ${brl(plano.antes.direto)} direto (atendimento + cancelamento) + recompra perdida`} />
         <Kpi destaque="azul" titulo={`Potencial · meta ${pct(meta)}`} valor={brl(pot.economiaTotal)} sub={`${pct(pot.noPrazoDepois)} no prazo · −${int(pot.atrasosEvitados)} atrasos · −${int(pot.cancelamentosEvitados)} cancelamentos/ano`} />
-        <Kpi destaque="verde" titulo="Recomendado pelo agente" valor={brl(rec.valorLiquido)} sub={`líquido/ano · ${rec.prefixos} prefixos · ${pct(rec.noPrazoDepois)} no prazo · inclui ${brl(rec.conversao)} de vendas`} />
+        <Kpi destaque="verde" titulo="Recomendado pelo agente" valor={brl(rec.valorLiquido + (plano.tiktok?.valorAno ?? 0))}
+          sub={`líquido/ano · ${rec.prefixos} prefixos · ${pct(rec.noPrazoDepois)} no prazo${plano.tiktok?.valorAno ? ` · inclui ${brl(plano.tiktok.valorAno)} do TikTok Shop destravado` : ""}`} />
       </section>
-      {pot.conversao < 0 && (
-        <p className="mt-2 text-xs text-slate-500">
-          Por que o recomendado é menor: para chegar à meta em todos os prefixos seria preciso prometer prazos maiores, o que custaria {brl(-pot.conversao)} em vendas
-          (líquido do plano completo: {brl(pot.valorLiquido)}). O agente só recomenda o que tem saldo positivo.
-        </p>
+      {plano.tiktok && (
+        <div className={`mt-3 rounded-xl border p-3 text-sm ${plano.tiktok.capadoHoje ? "border-fuchsia-300 bg-fuchsia-50 text-fuchsia-900" : "border-emerald-300 bg-emerald-50 text-emerald-900"}`}>
+          <b>TikTok Shop:</b> com a loja em {pct(plano.tiktok.noPrazoLojaHoje)} de entregas no prazo (abaixo de {pct(plano.tiktok.regua)}), o algoritmo corta {pct(plano.tiktok.corte)} das vendas no canal ({pct(plano.tiktok.fatia)} das vendas).{" "}
+          {plano.tiktok.destravado
+            ? <>O plano leva a loja a <b>{pct(plano.tiktok.noPrazoLojaPlano)}</b> e destrava <b>+{int(plano.tiktok.pedidosRecuperadosAno)} pedidos/ano ({brl(plano.tiktok.valorAno)})</b>. Para isso inclui {plano.tiktok.prefixosExtras} prefixos que isoladamente custariam {brl(-plano.tiktok.custoDasAcoesExtras)}.</>
+            : <>O plano não chega à régua com saldo positivo.</>}
+          <span className="block text-[11px] opacity-70">Regra informada pela banca (parâmetro injetado em data/injetado/tiktok_shop.json); não está na base original.</span>
+        </div>
       )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-5">
@@ -336,7 +342,7 @@ export default function Painel() {
             </div>
             {propostas.length > 0 && (
               <div className="mt-2 rounded-lg bg-emerald-50 p-2 text-sm text-emerald-900">
-                Aprovado pelo gerente: <b className="num">{brl(valorAprovado)}/ano</b> ({aprovadas.length} de {propostas.length})
+                Aprovado pelo gerente: <b className="num">{brl(valorAprovado)}/ano</b> ({aprovadas.length} de {propostas.length}){pacoteTiktok.length > 0 && <> · TikTok Shop {tiktokAprovado ? <b>destravado (+{brl(plano.tiktok!.valorAno)})</b> : <>destrava quando as {pacoteTiktok.length} propostas do pacote forem aprovadas</>}</>}
               </div>
             )}
             <div className="mt-3 space-y-3">
@@ -347,8 +353,9 @@ export default function Painel() {
                     <div>
                       <div className="font-medium">{p.id} · {p.regiao} <span className="text-xs text-slate-500">({p.tipo})</span></div>
                       <div className="text-xs text-slate-500">Prefixos {p.prefixos.join(", ")}</div>
+                      {p.prefixosPacoteTiktok > 0 && <div className="mt-0.5 inline-block rounded bg-fuchsia-100 px-1.5 py-0.5 text-[11px] text-fuchsia-800">pacote TikTok Shop: {p.prefixosPacoteTiktok} prefixo(s) entram para a loja passar de 92% (destrava {brl(plano.tiktok?.valorAno ?? 0)}/ano no conjunto)</div>}
                     </div>
-                    <div className="num text-right font-semibold text-emerald-700">{brl(p.valorLiquidoAno)}<span className="text-xs font-normal">/ano</span></div>
+                    <div className={`num text-right font-semibold ${p.valorLiquidoAno >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{brl(p.valorLiquidoAno)}<span className="text-xs font-normal">/ano</span></div>
                   </div>
                   <div className="mt-1">{p.mudanca}</div>
                   <div className="num mt-1 text-xs text-slate-500">No prazo {pct(p.noPrazoAntes)} → {pct(p.noPrazoDepois)} · {p.atrasosEvitadosAno >= 0 ? `−${int(p.atrasosEvitadosAno)}` : `+${int(-p.atrasosEvitadosAno)}`} atrasos · {p.cancelamentosEvitadosAno >= 0 ? `−${int(p.cancelamentosEvitadosAno)}` : `+${int(-p.cancelamentosEvitadosAno)}`} cancelamentos/ano</div>

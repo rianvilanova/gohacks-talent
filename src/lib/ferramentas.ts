@@ -19,6 +19,7 @@ export type Proposta = {
   id: string; prefixos: string[]; regiao: string; tipo: string; mudanca: string;
   justificativa: string; valorLiquidoAno: number; atrasosEvitadosAno: number; cancelamentosEvitadosAno: number;
   noPrazoAntes: number; noPrazoDepois: number; status: "aguardando_gerente";
+  prefixosPacoteTiktok: number; // prefixos que só entram para a loja passar da régua do TikTok Shop
 };
 
 const linha = (x: AcaoPrefixo) => ({
@@ -30,6 +31,7 @@ const linha = (x: AcaoPrefixo) => ({
   atrasos_evitados_ano: r0(x.atrasosEvitados), cancelamentos_evitados_ano: r0(x.cancelamentosEvitados),
   economia_atrasos_rs_ano: r0(x.economiaTotal), efeito_conversao_rs_ano: r0(x.conversao), frete_extra_rs_ano: r0(x.freteExtra),
   valor_liquido_rs_ano: r0(x.valorLiquido), recomendada: recomendada(x),
+  ...(x.peloTiktok ? { incluida_pela_regua_tiktok: "saldo isolado negativo, mas ajuda a loja a passar de 92% e destravar o TikTok Shop" } : {}),
 });
 
 export const DEFINICOES = [
@@ -43,11 +45,11 @@ export const DEFINICOES = [
   {
     type: "function", function: {
       name: "listar_prefixos",
-      description: "Lista prefixos de CEP (3 dígitos) com a ação calculada para cada um e o valor em R$/ano. ordem: 'valor' (maior valor líquido primeiro), 'pior_prazo' (menor % no prazo) ou 'prejuizo' (ações que dariam prejuízo). acao filtra por tipo de ação.",
+      description: "Lista prefixos de CEP (3 dígitos) com a ação calculada para cada um e o valor em R$/ano. ordem: 'valor' (maior valor líquido primeiro), 'pior_prazo' (menor % no prazo) ou 'prejuizo' (ações que dariam prejuízo) ou 'recomendadas' (todas as ações do plano recomendado, em formato curto, para agrupar em propostas). acao filtra por tipo de ação.",
       parameters: {
         type: "object",
         properties: {
-          ordem: { type: "string", enum: ["valor", "pior_prazo", "prejuizo"] },
+          ordem: { type: "string", enum: ["valor", "pior_prazo", "prejuizo", "recomendadas"] },
           acao: { type: "string", enum: ["mais_margem", "menos_margem", "rotear", "incidente"] },
           limite: { type: "integer", minimum: 1, maximum: 30 },
         },
@@ -80,7 +82,7 @@ export const DEFINICOES = [
       parameters: {
         type: "object",
         properties: {
-          prefixos: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 20, description: "prefixos de 3 dígitos com a mesma ação" },
+          prefixos: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 60, description: "prefixos de 3 dígitos com a mesma ação" },
           regiao: { type: "string", description: "nome curto da região, ex.: SP capital" },
           justificativa: { type: "string", description: "1 a 2 frases em português, citando só números vindos das ferramentas" },
         },
@@ -132,6 +134,15 @@ export function criarExecutor(ctx: Contexto) {
         potencial_plano_completo: { prefixos: pot.prefixos, no_prazo_pct: pct(pot.noPrazoDepois), atrasos_evitados_ano: r0(pot.atrasosEvitados), cancelamentos_evitados_ano: r0(pot.cancelamentosEvitados), economia_atrasos_rs_ano: r0(pot.economiaTotal), efeito_conversao_rs_ano: r0(pot.conversao), valor_liquido_rs_ano: r0(pot.valorLiquido) },
         recomendado_saldo_positivo: { prefixos: rec.prefixos, no_prazo_pct: pct(rec.noPrazoDepois), atrasos_evitados_ano: r0(rec.atrasosEvitados), cancelamentos_evitados_ano: r0(rec.cancelamentosEvitados), economia_atrasos_rs_ano: r0(rec.economiaTotal), efeito_conversao_rs_ano: r0(rec.conversao), valor_liquido_rs_ano: r0(rec.valorLiquido) },
         acoes: plano.contagem,
+        tiktok_shop: plano.tiktok && {
+          fonte: "parâmetro informado pela banca (injetado), não medido na base",
+          regra: `abaixo de ${pct(plano.tiktok.regua)}% de entregas no prazo (loja inteira) o TikTok corta ${pct(plano.tiktok.corte)}% das vendas; o canal é ${pct(plano.tiktok.fatia)}% das vendas`,
+          loja_no_prazo_hoje_pct: pct(plano.tiktok.noPrazoLojaHoje), loja_no_prazo_com_plano_pct: pct(plano.tiktok.noPrazoLojaPlano),
+          vendas_cortadas_hoje: plano.tiktok.capadoHoje, plano_destrava: plano.tiktok.destravado,
+          pedidos_recuperados_ano: r0(plano.tiktok.pedidosRecuperadosAno), valor_destravado_rs_ano: r0(plano.tiktok.valorAno),
+          prefixos_incluidos_so_pela_regua: plano.tiktok.prefixosExtras, custo_isolado_desses_prefixos_rs_ano: r0(plano.tiktok.custoDasAcoesExtras),
+        },
+        valor_total_recomendado_rs_ano: r0(rec.valorLiquido + (plano.tiktok?.valorAno ?? 0)),
         vereditos_154_prefixos: plano.prefixos.reduce((c, x) => { const v = ROTULO_VEREDITO[veredito(x)]; c[v] = (c[v] ?? 0) + 1; return c; }, {} as Record<string, number>),
       };
     },
@@ -165,6 +176,7 @@ export function criarExecutor(ctx: Contexto) {
     },
     listar_prefixos: (a) => {
       const lim = Math.min(15, Number(a.limite ?? 10)); // limite menor = menos tokens e agente mais rápido
+      if (a.ordem === "recomendadas") return plano.prefixos.filter(recomendada).filter((x) => !a.acao || x.acao === a.acao).map((x) => ({ prefixo: x.p3, cidade: x.cidade, uf: x.uf, acao: x.acao, transportadora: x.transportadoraAtual, margem: `${x.margemAtual}->${x.margemNova}`, valor_rs_ano: r0(x.valorLiquido), pela_regua_tiktok: x.peloTiktok }));
       let l = plano.prefixos.filter(ehAcaoReal).filter((x) => !a.acao || x.acao === a.acao);
       if (a.ordem === "pior_prazo") l = [...l].sort((x, y) => x.noPrazoAntes - y.noPrazoAntes);
       else if (a.ordem === "prejuizo") l = l.filter((x) => x.valorLiquido < 0).sort((x, y) => x.valorLiquido - y.valorLiquido);
@@ -227,6 +239,7 @@ export function criarExecutor(ctx: Contexto) {
         atrasosEvitadosAno: soma("atrasosEvitados"), cancelamentosEvitadosAno: soma("cancelamentosEvitados"),
         noPrazoAntes: xs.reduce((s, x) => s + x.noPrazoAntes * x.antes.envios, 0) / env,
         noPrazoDepois: xs.reduce((s, x) => s + x.noPrazoDepois * x.antes.envios, 0) / env, status: "aguardando_gerente",
+        prefixosPacoteTiktok: xs.filter((x) => x.peloTiktok).length,
       };
       propostas.push(p);
       const totalPropostas = propostas.reduce((s, q) => s + q.valorLiquidoAno, 0);
