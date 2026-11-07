@@ -12,6 +12,7 @@ import diaSeguinteJson from "@/data/dia_seguinte.json";
 const dados = dadosJson as unknown as Dados & { torre: Torre };
 const ds = diaSeguinteJson as { resumo: { respostas: Record<string, number>; novosParados: number }; alerta: { prefixo: string; cidade: string; transportadora: string; entreguesUltimos3Dias: number; noPrazoUltimos3Dias: number }; mensagemPortal: { transportadora: string; texto: string } };
 type Chamado = { id: string; transportadora: string; cod: string; motivo: string };
+type RotaRegiao = { n: number; pares: Record<string, number>; ganho: number }; // troca de transportadora pedido a pedido
 
 // ---------- linguagem simples (para quem não é de logística) ----------
 const SITUACAO: Record<Veredito, { rotulo: string; cor: string; explica: string }> = {
@@ -142,9 +143,18 @@ export default function Painel() {
   const totalPropostas = propostas.reduce((s, p) => s + p.valorLiquidoAno, 0) + (pacoteTiktok.length ? tk?.valorAno ?? 0 : 0);
 
   const situacoes = useMemo(() => plano.prefixos.reduce((c, x) => { const v = veredito(x); c[v] = (c[v] ?? 0) + 1; return c; }, {} as Record<Veredito, number>), [plano]);
-  const lista = useMemo(() => (soAcao ? plano.prefixos.filter(recomendada) : plano.prefixos), [plano, soAcao]);
-  const torre = dados.torre;
   const previaRota = useMemo(() => valorRoteamentoAno(dados, plano), [plano]);
+  const rotaPorP3 = useMemo(() => {
+    const m = new Map<string, RotaRegiao>();
+    for (const r of previaRota.roteados) {
+      const x = m.get(r.p3) ?? { n: 0, pares: {}, ganho: 0 };
+      x.n++; x.ganho += r.noPrazoPara - r.noPrazoDe; const k = `${r.de} → ${r.para}`; x.pares[k] = (x.pares[k] ?? 0) + 1;
+      m.set(r.p3, x);
+    }
+    return m;
+  }, [previaRota]);
+  const lista = useMemo(() => (soAcao ? plano.prefixos.filter((x) => recomendada(x) || rotaPorP3.has(x.p3)) : plano.prefixos), [plano, soAcao, rotaPorP3]);
+  const torre = dados.torre;
   const multaTotal = torre.multaTransportadoras.reduce((s, m) => s + m.multaDevidaAno, 0);
   const comChamado = new Set(chamados.map((c) => c.id));
   const atrasadosDe100 = Math.round((1 - plano.antes.noPrazo) * 100);
@@ -259,6 +269,12 @@ export default function Painel() {
                 ))}
               </div>
 
+              <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
+                <b>Trocar de transportadora pedido a pedido:</b> em <b>{rotaPorP3.size} regiões</b> outra transportadora entrega melhor. O agente manda por ela {previaRota.roteados.length} de {int(previaRota.analisados)} pedidos novos ({Math.round(previaRota.parcela * 100)}%), sem mudar o prazo prometido:
+                ≈ −{int(previaRota.atrasosEvitadosAno)} atrasos/ano, {brl(previaRota.valorAno)}/ano e frete {previaRota.freteAno <= 0 ? `${brl(-previaRota.freteAno)} mais barato` : `${brl(previaRota.freteAno)} mais caro`} (estimado).
+                <span className="mt-1 block text-sky-700">Principais: {[...rotaPorP3.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 4).map(([p3, r]) => { const px = plano.prefixos.find((q) => q.p3 === p3); return `${px?.cidade ?? p3} (${Object.keys(r.pares)[0]})`; }).join(" · ")}</span>
+              </div>
+
               <div className="mt-5 flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold">{soAcao ? `Onde o agente vai agir (${lista.length})` : "Todas as regiões (154)"}</h3>
                 <button onClick={() => setSoAcao(!soAcao)} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 hover:bg-slate-200">
@@ -271,7 +287,7 @@ export default function Painel() {
                     <tr><th className="py-1">Região</th><th>O que o agente faz</th><th>No prazo</th><th className="text-right">Valor/ano</th></tr>
                   </thead>
                   <tbody>
-                    {lista.map((x) => <LinhaRegiao key={x.p3} x={x} aberto={aberto === x.p3} onClick={() => setAberto(aberto === x.p3 ? null : x.p3)} />)}
+                    {lista.map((x) => <LinhaRegiao key={x.p3} x={x} rota={rotaPorP3.get(x.p3)} aberto={aberto === x.p3} onClick={() => setAberto(aberto === x.p3 ? null : x.p3)} />)}
                   </tbody>
                 </table>
               </div>
@@ -451,7 +467,7 @@ export default function Painel() {
   );
 }
 
-function LinhaRegiao({ x, aberto, onClick }: { x: AcaoPrefixo; aberto: boolean; onClick: () => void }) {
+function LinhaRegiao({ x, rota, aberto, onClick }: { x: AcaoPrefixo; rota?: RotaRegiao; aberto: boolean; onClick: () => void }) {
   const v = veredito(x), dias = x.margemNova - x.margemAtual;
   const oQueFaz = x.acao === "mais_margem" ? `Prometer +${dias} dia${dias > 1 ? "s" : ""}`
     : x.acao === "menos_margem" ? `Prometer ${Math.abs(dias)} dia${Math.abs(dias) > 1 ? "s" : ""} a menos`
@@ -465,7 +481,11 @@ function LinhaRegiao({ x, aberto, onClick }: { x: AcaoPrefixo; aberto: boolean; 
           <div><b>{x.cidade}</b> <span className="text-xs text-slate-500">{x.uf} · CEP {x.p3}</span></div>
           <span className={`mt-0.5 inline-block rounded border px-1.5 text-[11px] ${SITUACAO[v].cor}`}>{SITUACAO[v].rotulo}</span>
         </td>
-        <td>{age ? <span className={`rounded-full px-2 py-0.5 text-xs ${ACAO[x.acao].cor}`}>{oQueFaz}</span> : <span className="text-xs text-slate-400">—</span>}</td>
+        <td className="space-y-1">
+          {age && <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${ACAO[x.acao].cor}`}>{oQueFaz}</span>}
+          {rota && <span className="block w-fit rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800">Trocar transportadora em {rota.n} pedido{rota.n > 1 ? "s" : ""}</span>}
+          {!age && !rota && <span className="text-xs text-slate-400">—</span>}
+        </td>
         <td className="text-xs">{pct(x.noPrazoAntes)}{age && x.noPrazoDepois !== x.noPrazoAntes && <> → <b>{pct(x.noPrazoDepois)}</b></>}</td>
         <td className={`text-right font-medium ${!age ? "text-slate-300" : x.valorLiquido > 0 ? "text-emerald-700" : "text-rose-700"}`}>{age ? brl(x.valorLiquido) : "—"}</td>
       </tr>
@@ -481,6 +501,7 @@ function LinhaRegiao({ x, aberto, onClick }: { x: AcaoPrefixo; aberto: boolean; 
               <div>Economia com atrasos: {brl(x.economiaTotal)}/ano</div>
               <div>Vendas no site: <b className={x.conversao >= 0 ? "text-emerald-700" : "text-rose-700"}>{brl(x.conversao)}</b>/ano{x.freteExtra > 0 && <> · frete a mais {brl(-x.freteExtra)}</>}</div>
             </div>
+            {rota && <div className="mt-2 text-sky-800">Pedido a pedido: {Object.entries(rota.pares).map(([k, n]) => `${k} (${n})`).join(" · ")}. Na média, +{Math.round((rota.ganho / rota.n) * 100)} pontos de chance de chegar na data já prometida ao cliente.</div>}
             {x.estimadoPor && <div className="mt-2 text-amber-700">Poucos pedidos nesta região: a decisão usa o histórico de regiões parecidas ({x.estimadoPor}).</div>}
             {x.peloTiktok && <div className="mt-2 text-fuchsia-700">Sozinha dá prejuízo, mas entra no pacote que leva a loja acima de 92% e destrava o TikTok Shop.</div>}
             {!age && ehAcaoReal(x) && <div className="mt-2 text-rose-700">O agente não age aqui: perderia mais vendas do que economizaria.</div>}
