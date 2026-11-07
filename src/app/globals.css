@@ -1,21 +1,54 @@
 @import "tailwindcss";
 
+/* Identidade GoGroup (artbook/): azul #005BAC, verde-limão #D4DC00, fundo cinza-claro, Poppins, sem sombras */
 :root {
-  --background: #f6f7f9;
+  --background: #f2f2f2;
   --foreground: #14171f;
+  --marca-azul: #005bac;
+  --marca-limao: #d4dc00;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-poppins);
   --font-mono: var(--font-geist-mono);
+}
+
+/* cores de destaque da tela remapeadas para a marca (verde/vermelho/âmbar seguem indicando bom/ruim) */
+@theme {
+  --color-slate-900: #005bac; /* botões e abas ativas */
+
+  /* azul da marca: diário (sky) e semanal (violet) */
+  --color-sky-50: #eef4fb;
+  --color-sky-100: #d9e7f6;
+  --color-sky-200: #b3cfec;
+  --color-sky-400: #4d8fd1;
+  --color-sky-700: #005bac;
+  --color-sky-800: #004c8f;
+  --color-sky-900: #003f77;
+  --color-sky-950: #002b52;
+  --color-violet-50: #eef4fb;
+  --color-violet-200: #b3cfec;
+  --color-violet-700: #004c8f;
+  --color-violet-800: #003f77;
+  --color-violet-950: #002b52;
+
+  /* verde-limão da marca: simulação e TikTok (texto em azul escuro para leitura) */
+  --color-fuchsia-50: #fafbe0;
+  --color-fuchsia-100: #f3f6b8;
+  --color-fuchsia-300: #d4dc00;
+  --color-fuchsia-700: #004c8f;
+  --color-fuchsia-800: #003f77;
+  --color-fuchsia-950: #002b52;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-family: var(--font-poppins), system-ui, sans-serif;
 }
+
+h1 { color: var(--marca-azul); }
 
 .num { font-variant-numeric: tabular-nums; }

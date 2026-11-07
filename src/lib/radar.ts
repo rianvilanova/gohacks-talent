@@ -16,6 +16,7 @@ export type Prefixo = {
   transp: Record<string, { todos: Hist; treino: Hist; teste: Hist; base: { treino: Hist; teste: Hist }; freteMedio: number | null }>;
   fretePorTransp: Record<string, number>;
   concorrentesPrazoMediana: number | null; concorrentesColetas: number;
+  fatorConversao?: number; // opção "reduzir 50% o impacto de SP" (reduzirImpactoSP)
 };
 
 export type Dados = {
@@ -122,7 +123,7 @@ export function efeitoConversao(d: Dados, p: Prefixo, delta: number, enviosAno: 
   const f = (g: number) => c[String(Math.max(lo, Math.min(hi, g)))] ?? 1;
   const gap = p.regra.prazo - (p.concorrentesPrazoMediana ?? p.regra.prazo);
   const fator = f(gap + delta) / f(gap) - 1; // ex.: -0,15 = 15% menos pedidos
-  return enviosAno * sensibilidade * fator * PARAMS.margemContribuicao * valorMedio(p.teste);
+  return enviosAno * sensibilidade * (p.fatorConversao ?? 1) * fator * PARAMS.margemContribuicao * valorMedio(p.teste);
 }
 
 export type Plano = {
@@ -500,4 +501,10 @@ export function valorRoteamentoAno(d: Dados & { torre: Torre }, plano: PlanoAcoe
     economiaFreteAno, sobrepostos: r.roteados.length - conta.length,
     valorAno: atrasoHist * fatorTeste + economiaFreteAno, // conservador: ganho de prazo descontado pelo teste + frete
   };
+}
+
+/** Opção da simulação: nas regiões de SP conta só uma fração (padrão 50%) do efeito de vendas medido no checkout.
+ *  SP tem 19% dos pedidos, mas ~94% do ganho semanal vem dele. Pedidos, prazos e entregas não mudam. */
+export function reduzirImpactoSP<T extends Dados>(d: T, fator = 0.5): T {
+  return { ...d, prefixos: d.prefixos.map((p) => (p.uf === "SP" || p.regra?.uf === "SP" ? { ...p, fatorConversao: fator } : p)) };
 }

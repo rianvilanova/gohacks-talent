@@ -4,13 +4,13 @@ import { useMemo, useRef, useState } from "react";
 import dadosJson from "@/data/radar.json";
 import {
   type Dados, type Acao, type AcaoPrefixo, type Torre, type Roteamento, type Veredito, planoAcoes, recomendada, ehAcaoReal,
-  FAIXAS, veredito, valorRoteamentoAno,
+  FAIXAS, veredito, valorRoteamentoAno, resumir, reduzirImpactoSP,
 } from "@/lib/radar";
 import type { Proposta, Acionamento } from "@/lib/ferramentas";
-import diaSeguinteJson from "@/data/dia_seguinte.json";
+import rodadaManhaJson from "@/data/rodada_manha.json";
 
-const dados = dadosJson as unknown as Dados & { torre: Torre };
-const ds = diaSeguinteJson as { resumo: { respostas: Record<string, number>; novosParados: number }; alerta: { prefixo: string; cidade: string; transportadora: string; entreguesUltimos3Dias: number; noPrazoUltimos3Dias: number }; mensagemPortal: { transportadora: string; texto: string } };
+const DADOS_ORIGINAL = dadosJson as unknown as Dados & { torre: Torre };
+const dados = DADOS_ORIGINAL; // fora do Painel (metodologia): campos iguais nas duas bases
 type Chamado = { id: string; transportadora: string; cod: string; motivo: string };
 type RotaRegiao = { n: number; pares: Record<string, number>; ganho: number }; // troca de transportadora pedido a pedido
 
@@ -67,13 +67,34 @@ function passoDoAgente(e: Extract<Evento, { tipo: "ferramenta" }>) {
 }
 
 type Aba = "regioes" | "pedidos" | "impacto";
-type Rodada = { pergunta: string | null; eventos: Evento[] };
+type Rodada = { pergunta: string | null; eventos: Evento[]; modo?: "diario" | "semanal" };
 const PERGUNTAS_PRONTAS = ["E se prometer +1 dia em Marabá?", "Qual transportadora mais atrasa?", "Por que São Paulo tem prazo sobrando?"];
+// rodada real do agente, gravada da API e carregada ao abrir a tela (a varredura das 7h)
+const RODADA_MANHA = rodadaManhaJson as unknown as { eventos: Evento[]; fim: Extract<Evento, { tipo: "fim" }> };
 function comNegrito(t: string) {
   return t.split(/\*\*(.+?)\*\*/g).map((p, i) => (i % 2 ? <b key={i}>{p}</b> : p));
 }
 
-export default function Painel() {
+type ModoAgente = "diario" | "semanal";
+
+export default function Tela() {
+  const [simulacao, setSimulacao] = useState(false);
+  return (
+    <>
+      <div className="mx-auto flex w-full max-w-7xl px-4 pt-4 sm:px-6">
+        <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
+          <button onClick={() => setSimulacao(false)} className={`rounded-lg px-3 py-1.5 ${!simulacao ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}>Tela do dia</button>
+          <button onClick={() => setSimulacao(true)} className={`rounded-lg px-3 py-1.5 ${simulacao ? "bg-[#d4dc00] font-semibold text-[#005bac]" : "text-slate-600 hover:bg-slate-50"}`}>Simulação: ver o agente rodar</button>
+        </div>
+      </div>
+      <Painel key={simulacao ? "sim" : "dia"} simulacao={simulacao} />
+    </>
+  );
+}
+
+function Painel({ simulacao }: { simulacao: boolean }) {
+  const [metadeSP, setMetadeSP] = useState(false); // opção da simulação: reduzir 50% o impacto de SP
+  const dados = useMemo(() => (metadeSP ? reduzirImpactoSP(DADOS_ORIGINAL) : DADOS_ORIGINAL), [metadeSP]);
   const [meta, setMeta] = useState(0.95);
   const [queda, setQueda] = useState(1);
   const [aba, setAba] = useState<Aba>("pedidos");
@@ -82,38 +103,40 @@ export default function Painel() {
   const [aberto, setAberto] = useState<string | null>(null);
 
   const [comTiktok, setComTiktok] = useState(false); // padrão: número estável, sem a regra do TikTok (parâmetro da banca)
-  const plano = useMemo(() => planoAcoes(dados, meta, queda, comTiktok), [meta, queda, comTiktok]);
+  const plano = useMemo(() => planoAcoes(dados, meta, queda, comTiktok), [dados, meta, queda, comTiktok]);
   const tk = plano.tiktok;
 
   // ---------- agente ----------
   const [rodando, setRodando] = useState(false);
-  const [rodadas, setRodadas] = useState<Rodada[]>([]);
-  const eventos = rodadas.flatMap((r) => r.eventos);
+  const [rodadas, setRodadas] = useState<Rodada[]>(simulacao ? [] : [{ pergunta: null, eventos: RODADA_MANHA.eventos }]);
   const addEvento = (ev: Evento) => setRodadas((rs) => rs.length ? [...rs.slice(0, -1), { ...rs[rs.length - 1], eventos: [...rs[rs.length - 1].eventos, ev] }] : rs);
-  const [propostas, setPropostas] = useState<Proposta[]>([]);
+  const [propostas, setPropostas] = useState<Proposta[]>(simulacao ? [] : RODADA_MANHA.fim.propostas);
   const [decisoes, setDecisoes] = useState<Record<string, "aprovada" | "recusada">>({});
   const [uso, setUso] = useState<string>("");
-  const [chamados, setChamados] = useState<Chamado[]>([]);
-  const [roteados, setRoteados] = useState<Roteamento[] | null>(null);
-  const [dia, setDia] = useState<1 | 2>(1);
-  const [ontem, setOntem] = useState<Proposta[]>([]);
-  const [acionamentos, setAcionamentos] = useState<Acionamento[]>([]);
+  const [chamados, setChamados] = useState<Chamado[]>(simulacao ? [] : RODADA_MANHA.fim.chamados ?? []);
+  const [roteados, setRoteados] = useState<Roteamento[] | null>(simulacao ? null : RODADA_MANHA.fim.roteamento ?? null);
+  const [agoraMesmo, setAgoraMesmo] = useState(false);
+  const [rodou, setRodou] = useState<Record<ModoAgente, boolean>>({ diario: !simulacao, semanal: !simulacao });
+  const [rodandoModo, setRodandoModo] = useState<ModoAgente | null>(null);
   const [pergunta, setPergunta] = useState("");
   const fimRef = useRef<HTMLDivElement>(null);
 
-  function limpar() { setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setRodadas([]); setAcionamentos([]); setUso(""); }
-  function irParaDiaSeguinte() { setOntem(propostas.filter((p) => decisoes[p.id] === "aprovada")); setDia(2); limpar(); }
-  function voltarParaHoje() { setDia(1); setOntem([]); limpar(); }
 
-  async function rodarAgente(textoPergunta?: string) {
+  async function rodarAgente(textoPergunta?: string, modo?: ModoAgente) {
+    if (modo) setRodandoModo(modo);
     setRodando(true); setUso("");
     if (textoPergunta) { setRodadas((rs) => [...rs, { pergunta: textoPergunta, eventos: [] }]); setPergunta(""); }
+    else if (modo) setRodadas((rs) => [...rs, { pergunta: null, eventos: [], modo }]);
     else setRodadas([{ pergunta: null, eventos: [] }]);
-    if (!textoPergunta) { setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setAcionamentos([]); }
+    if (!textoPergunta) {
+      setAgoraMesmo(true);
+      if (modo !== "diario") { setPropostas([]); setDecisoes({}); }
+      if (modo !== "semanal") { setChamados([]); setRoteados(null); }
+    }
     try {
       const r = await fetch("/api/agente", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meta, sensibilidade: queda, tiktok: comTiktok, pergunta: textoPergunta, dia, aprovadasOntem: ontem.map((p) => `${p.id} ${p.regiao}: ${p.mudanca}`) }),
+        body: JSON.stringify({ meta, sensibilidade: queda, tiktok: comTiktok, pergunta: textoPergunta, dia: 1, modo, base: metadeSP ? "sem_sp" : "original" }),
       });
       if (!r.ok || !r.body) { const j = await r.json().catch(() => ({})); throw new Error(j.erro ?? `HTTP ${r.status}`); }
       const leitor = r.body.getReader(), dec = new TextDecoder();
@@ -130,7 +153,6 @@ export default function Painel() {
             if (ev.propostas.length) setPropostas(ev.propostas);
             if (ev.chamados?.length) setChamados(ev.chamados);
             if (ev.roteamento?.length) setRoteados(ev.roteamento);
-            if (ev.acionamentos?.length) setAcionamentos(ev.acionamentos);
             setUso(`${ev.uso.modelo} · ${int(ev.uso.tokensEntrada + ev.uso.tokensSaida)} tokens`);
           } else addEvento(ev);
           setTimeout(() => fimRef.current?.scrollIntoView({ block: "nearest" }), 50);
@@ -138,7 +160,10 @@ export default function Painel() {
       }
     } catch (e) {
       addEvento({ tipo: "erro", texto: String(e) });
-    } finally { setRodando(false); }
+    } finally {
+      setRodando(false); setRodandoModo(null);
+      if (modo) setRodou((r) => ({ ...r, [modo]: true }));
+    }
   }
 
   const aprovadas = propostas.filter((p) => decisoes[p.id] === "aprovada");
@@ -148,7 +173,8 @@ export default function Painel() {
   const totalPropostas = propostas.reduce((s, p) => s + p.valorLiquidoAno, 0) + (pacoteTiktok.length ? tk?.valorAno ?? 0 : 0);
 
   const situacoes = useMemo(() => plano.prefixos.reduce((c, x) => { const v = veredito(x); c[v] = (c[v] ?? 0) + 1; return c; }, {} as Record<Veredito, number>), [plano]);
-  const previaRota = useMemo(() => valorRoteamentoAno(dados, plano), [plano]);
+  const porP3 = useMemo(() => new Map(plano.prefixos.map((x) => [x.p3, x])), [plano]);
+  const previaRota = useMemo(() => valorRoteamentoAno(dados, plano), [dados, plano]);
   const rotaPorP3 = useMemo(() => {
     const m = new Map<string, RotaRegiao>();
     for (const r of previaRota.roteados) {
@@ -179,37 +205,122 @@ export default function Painel() {
       acao: "Cobrar a transportadora", ganho: e.vencido ? "já passou da data prometida" : `vence em ${e.prometida.slice(8, 10)}/${e.prometida.slice(5, 7)}`, urgente: e.vencido,
       conta: `chamado no portal da ${e.t} pedindo nova previsão de entrega; sem resposta em 24h o agente reabre; se extraviou, aciona o financeiro`,
     }));
-    return [...cobrar, ...rota];
+    return [...rota, ...cobrar]; // trocas de transportadora primeiro
   }, [plano, roteados, previaRota, diaDoPedido, ONTEM, torre]);
   const statusDe = (sg: Sugestao) => ((sg.tipo === "cobrar" && comChamado.has(sg.id)) || (sg.tipo === "rotear" && roteados?.some((r) => r.id === sg.id)) ? "agente" : undefined);
   const sugestoesVisiveis = sugestoes.filter((sg) => filtroPedido === "todas" || sg.tipo === filtroPedido);
   const ganhoRotasOntem = sugestoes.filter((sg) => sg.tipo === "rotear").length ? (roteados ?? previaRota.roteados).filter((r) => diaDoPedido.get(r.id) === ONTEM).reduce((a, r) => a + r.ganhoRs, 0) : 0;
+
+  // na simulação, depois que os dois agentes rodam, os indicadores mostram a projeção com as ações (número antigo menor, ao lado)
+  const projetar = simulacao && rodou.diario && rodou.semanal;
+  // ações recomendadas por região (89,1%, o que o agente informa) + troca de transportadora por pedido (atrasos evitados já descontados pelo teste fora da amostra)
+  const noPrazoPlano = useMemo(() => resumir(plano, recomendada).noPrazoDepois + previaRota.atrasosEvitadosAno / dados.enviosPorAno, [dados, plano, previaRota]);
+  const abaixoAntes = plano.prefixos.filter((x) => x.acao !== "sem_dados" && x.noPrazoAntes < 0.92).length;
+  const abaixoDepois = plano.prefixos.filter((x) => x.acao !== "sem_dados" && (recomendada(x) ? x.noPrazoDepois : x.noPrazoAntes) < 0.92).length;
+  const antigo = (t: string) => <span className="mr-1.5 text-base font-normal text-slate-400 line-through decoration-slate-300">{t}</span>;
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Radar de Prazo</h1>
-          <p className="text-sm text-slate-500">Logística · Gocase e GoBeauté · {dia === 1 ? "segunda, 02/11" : "terça, 03/11 (simulado)"}</p>
+          <p className="text-sm text-slate-500">Logística · Gocase e GoBeauté · segunda, 02/11</p>
         </div>
-        <p className="text-xs text-slate-400">Última varredura do agente: {eventos.some((e) => e.tipo === "final") ? "agora" : "hoje, 07:00"}</p>
+        <p className="text-xs text-slate-400">Última varredura do agente: {agoraMesmo ? "agora" : simulacao ? "ainda não rodou" : "hoje, 07:00"}</p>
       </header>
+
+      {simulacao && (
+        <section className="mt-5 rounded-xl border border-fuchsia-300 bg-fuchsia-50 p-4">
+          <div className="font-semibold text-fuchsia-950">O agente roda automaticamente, tela simulada para ver como ele roda.</div>
+          <p className="mt-1 text-xs text-fuchsia-800">Em produção ele roda sozinho: o diário todo dia às 7h e o semanal toda segunda às 7h. Aqui a tela começa vazia e vai sendo preenchida conforme você roda cada um (chama a IA de verdade, ~1 min).</p>
+          <label className="mt-3 flex w-fit items-center gap-2 rounded-lg border border-fuchsia-300 bg-white px-3 py-2 text-sm text-fuchsia-950">
+            <input type="checkbox" checked={metadeSP} disabled={rodando} onChange={(e) => {
+              setMetadeSP(e.target.checked);
+              setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setRodadas([]); setRodou({ diario: false, semanal: false }); setAgoraMesmo(false); setUso("");
+            }} />
+            <span><b>Reduzir em 50% o impacto de SP</b> <span className="text-xs text-fuchsia-800">(SP tem 19% dos pedidos, mas ~94% do ganho semanal; conta só metade das vendas recuperadas lá)</span></span>
+          </label>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button disabled={rodando} onClick={() => rodarAgente(undefined, "diario")} className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              {rodandoModo === "diario" ? "Trabalhando…" : rodou.diario ? "✔ Rodar agente de novo" : "▶ Rodar agente"}</button>
+            <button disabled={rodando} onClick={() => rodarAgente(undefined, "semanal")} className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              {rodandoModo === "semanal" ? "Trabalhando…" : rodou.semanal ? "✔ Rodar (agente semanal) de novo" : "▶ Rodar (agente semanal)"}</button>
+          </div>
+          <p className="mt-2 text-xs text-fuchsia-800">Diário: cobra os pedidos parados e troca a transportadora dos pedidos novos (preenche a aba Diário). Semanal: revisa as regiões e prepara as decisões para o gerente (preenche as decisões, a aba Semanal e o impacto).</p>
+        </section>
+      )}
+
+      <section id="decisoes" className="mt-5 rounded-xl border border-amber-300 bg-amber-50/30 p-4">
+        <div className="flex items-baseline justify-between">
+          <h2 className="font-semibold">Decisões do agente esperando sua aprovação</h2>
+          {propostas.length > 0 && <span className="num text-sm text-slate-600">{brl(totalPropostas)}/ano</span>}
+        </div>
+        {propostas.length > 0 && (
+          <div className="mt-2 rounded-lg bg-emerald-50 p-2 text-sm text-emerald-900">
+            Aprovado: <b className="num">{brl(valorAprovado)}/ano</b> ({aprovadas.length} de {propostas.length})
+            {pacoteTiktok.length > 0 && <span className="block text-xs">{tiktokAprovado ? <>TikTok Shop destravado: +{brl(tk!.valorAno)}/ano</> : <>Aprove as {pacoteTiktok.length} decisões marcadas “TikTok” para destravar {brl(tk?.valorAno ?? 0)}/ano</>}</span>}
+          </div>
+        )}
+        <div className="mt-3 grid items-start gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {propostas.length === 0 && <p className="text-sm text-slate-400">{rodandoModo === "semanal" || (rodando && !simulacao) ? "O agente está revisando as regiões…" : simulacao && !rodou.semanal ? "Vazio: rode o agente semanal para ele preparar as decisões." : "Nada esperando aprovação."}</p>}
+          {propostas.map((p) => (
+            <div key={p.id} className={`rounded-lg border p-3 text-sm ${decisoes[p.id] === "aprovada" ? "border-emerald-300 bg-emerald-50/50" : decisoes[p.id] === "recusada" ? "border-slate-200 opacity-50" : "border-slate-200"}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-medium">{p.regiao}</div>
+                  <div className="text-xs text-slate-600">{p.mudanca}</div>
+                </div>
+                <div className={`num shrink-0 text-right font-semibold ${p.valorLiquidoAno >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{brl(p.valorLiquidoAno)}<span className="text-xs font-normal">/ano</span></div>
+              </div>
+              <div className="num mt-1 text-xs text-slate-500">
+                {p.prefixos.length} região(ões) · no prazo {pct(p.noPrazoAntes)} → {pct(p.noPrazoDepois)}
+                {p.prefixosPacoteTiktok > 0 && <span className="ml-1 rounded bg-fuchsia-100 px-1.5 py-0.5 text-[11px] text-fuchsia-800">TikTok</span>}
+              </div>
+              <details className="mt-1 text-xs text-slate-600">
+                <summary className="cursor-pointer text-slate-500">Por quê? Ver os números</summary>
+                <PorQue p={p} regioes={p.prefixos.map((q) => porP3.get(q)).filter((x): x is AcaoPrefixo => !!x)} />
+              </details>
+              <div className="mt-2 flex gap-2">
+                {decisoes[p.id] ? (
+                  <span className="text-xs font-medium">{decisoes[p.id] === "aprovada" ? "✔ Aprovada" : "✖ Recusada"}</span>
+                ) : (
+                  <>
+                    <button onClick={() => setDecisoes((d) => ({ ...d, [p.id]: "aprovada" }))} className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white">Aprovar</button>
+                    <button onClick={() => setDecisoes((d) => ({ ...d, [p.id]: "recusada" }))} className="rounded-md border border-slate-300 px-3 py-1 text-xs">Recusar</button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ---------- bom dia: o que o agente já fez às 7h ---------- */}
+      {(rodou.diario || rodou.semanal) && <section className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+        <div className="text-sm font-semibold text-emerald-950">Bom dia! {agoraMesmo ? "O agente acabou de rodar" : "O agente rodou às 7h"} e já resolveu sozinho:</div>
+        <ul className="mt-2 grid gap-2 text-sm text-emerald-950 sm:grid-cols-3">
+          <li className="rounded-lg bg-white/70 px-3 py-2"><b className="num">{int(chamados.length)}</b> pedidos parados cobrados no portal da transportadora</li>
+          <li className="rounded-lg bg-white/70 px-3 py-2"><b className="num">{int(sugestoes.filter((sg) => sg.tipo === "rotear").length)}</b> pedidos de ontem trocados para uma transportadora melhor ({reais(ganhoRotasOntem)} de ganho esperado)</li>
+          <li className="rounded-lg bg-white/70 px-3 py-2"><b className="num">{propostas.filter((p) => !decisoes[p.id]).length}</b> mudanças de prazo/transportadora por região esperando você{propostas.length > 0 && <> (valem <b className="num">{brl(totalPropostas)}/ano</b>)</>}</li>
+        </ul>
+      </section>}
 
       <section className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs text-slate-500">Entregas no prazo · últimos 60 dias</div>
-          <div className="num mt-1 text-3xl font-semibold">{pct(plano.antes.noPrazo)}</div>
-          <div className={`text-xs ${plano.antes.noPrazo < 0.92 ? "text-rose-700" : "text-emerald-700"}`}>meta da política: 92% por região</div>
+          <div className="num mt-1 text-3xl font-semibold">{projetar ? <>{antigo(pct(plano.antes.noPrazo))}<span className="text-emerald-700">→ {Math.round(noPrazoPlano * 100)}%</span></> : pct(plano.antes.noPrazo)}</div>
+          {simulacao ? (projetar && <div className="text-xs text-emerald-700">projeção: regiões + troca por pedido</div>)
+            : <div className={`text-xs ${plano.antes.noPrazo < 0.92 ? "text-rose-700" : "text-emerald-700"}`}>meta da política: 92% por região</div>}
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs text-slate-500">Pedidos parados há 3+ dias</div>
           <div className="num mt-1 text-3xl font-semibold">{int(torre.emRisco.length)}</div>
-          <div className="text-xs text-slate-500">{int(torre.emRisco.filter((e) => e.vencido).length)} já passaram da data prometida</div>
+          <div className="text-xs text-slate-500">{int(torre.emRisco.filter((e) => e.vencido).length)} já passaram da data prometida{simulacao && rodou.diario && <span className="text-emerald-700"> · {int(chamados.length)} cobrados pelo agente</span>}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs text-slate-500">Regiões abaixo da meta</div>
-          <div className="num mt-1 text-3xl font-semibold">{plano.prefixos.filter((x) => x.acao !== "sem_dados" && x.noPrazoAntes < 0.92).length}<span className="text-base font-normal text-slate-400"> de 154</span></div>
-          <div className="text-xs text-slate-500">{lista.length} com ação do agente</div>
+          <div className="num mt-1 text-3xl font-semibold">{projetar ? <>{antigo(String(abaixoAntes))}<span className="text-emerald-700">→ {abaixoDepois}</span></> : abaixoAntes}<span className="text-base font-normal text-slate-400"> de 154</span></div>
+          {(!simulacao || projetar) && <div className="text-xs text-slate-500">o agente age em {plano.prefixos.filter((x) => x.acao !== "sem_dados" && x.noPrazoAntes < 0.92 && (recomendada(x) || rotaPorP3.has(x.p3))).length} delas{projetar && <span className="text-emerald-700"> · {abaixoAntes - abaixoDepois} passam da meta</span>}</div>}
         </div>
         <div className={`rounded-xl border p-4 ${propostas.some((p) => !decisoes[p.id]) ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}>
           <div className="text-xs text-slate-500">Decisões aguardando o gerente</div>
@@ -217,6 +328,7 @@ export default function Painel() {
           <div className="text-xs text-slate-500">{propostas.length ? `valem ${brl(totalPropostas)}/ano` : "rode o agente para gerar"}</div>
         </div>
       </section>
+
 
       <div className="mt-6 space-y-6">
         {/* ---------- esquerda: abas ---------- */}
@@ -227,7 +339,8 @@ export default function Painel() {
             ))}
           </div>
 
-          {aba === "regioes" && (
+          {aba === "regioes" && simulacao && !rodou.semanal && <section className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">O agente ainda não revisou as regiões. Clique em “Rodar (agente semanal)” no topo.</section>}
+          {aba === "regioes" && (!simulacao || rodou.semanal) && (
             <section className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
               <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs text-violet-950">
                 <div className="text-sm font-semibold">Toda segunda, 7h · o agente revisa as 154 regiões com as últimas 4 semanas</div>
@@ -275,9 +388,11 @@ export default function Painel() {
             </section>
           )}
 
-          {aba === "impacto" && <ImpactoFinanceiro plano={plano} rota={previaRota} multa={multaTotal} />}
+          {aba === "impacto" && simulacao && !rodou.semanal && <section className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">O impacto aparece depois que o agente semanal preparar as decisões.</section>}
+          {aba === "impacto" && (!simulacao || rodou.semanal) && <ImpactoFinanceiro plano={plano} rota={previaRota} multa={multaTotal} />}
 
-          {aba === "pedidos" && (
+          {aba === "pedidos" && simulacao && !rodou.diario && <section className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">O agente ainda não passou pelos pedidos de ontem. Clique em “Rodar agente” no topo.</section>}
+          {aba === "pedidos" && (!simulacao || rodou.diario) && (
             <section className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
@@ -286,11 +401,9 @@ export default function Painel() {
                     <ul className="mt-1 list-disc space-y-0.5 pl-5">
                       <li>Troca a transportadora dos pedidos novos quando outra entrega melhor na região e o ganho paga o frete</li>
                       <li>Cobra a transportadora nos pedidos parados há 3+ dias (até 80 por dia, os mais urgentes primeiro)</li>
-                      <li>Acompanha as respostas: reabre chamado sem resposta e aciona o financeiro se o pedido extraviou</li>
                     </ul>
                   </div>
                   <h2 className="font-semibold">Pedidos de ontem ({ONTEM.split("-").reverse().slice(0, 2).join("/")}): o que fazer agora</h2>
-                  <p className="text-xs text-slate-500">O agente passou pelos pedidos de ontem e pelos que estão parados e age sozinho: troca a transportadora antes do despacho e abre a cobrança no portal da transportadora. Você só acompanha.</p>
                 </div>
               </div>
 
@@ -366,88 +479,6 @@ export default function Painel() {
 
         </div>
 
-        {/* ---------- direita: agente e gerente ---------- */}
-        <div className="space-y-4">
-          <div className="flex max-w-md rounded-xl border border-slate-200 bg-white p-1 text-sm">
-            <button onClick={voltarParaHoje} className={`flex-1 rounded-lg px-3 py-2 ${dia === 1 ? "bg-slate-900 text-white" : "text-slate-600"}`}>Hoje, 02/11</button>
-            <button onClick={irParaDiaSeguinte} disabled={rodando} className={`flex-1 rounded-lg px-3 py-2 ${dia === 2 ? "bg-fuchsia-700 text-white" : "text-slate-600"}`}>Amanhã, 03/11 (simulado)</button>
-          </div>
-
-          {dia === 2 && (
-            <section className="rounded-xl border border-fuchsia-300 bg-fuchsia-50/40 p-4 text-sm">
-              <h2 className="font-semibold">Bom dia, gerente · 03/11, 7h</h2>
-              <p className="text-[11px] text-fuchsia-800">Dia simulado para a demonstração; não entra nos números.</p>
-              <div className="mt-2 text-xs font-medium text-slate-600">Em vigor desde ontem</div>
-              {ontem.length ? <ul className="mt-1 list-disc pl-5 text-xs">{ontem.map((p) => <li key={p.id}>{p.regiao}: {p.mudanca}</li>)}</ul>
-                : <p className="mt-1 text-xs text-slate-500">Nada aprovado ontem. Para a demo: em “Hoje”, rode o agente e aprove as decisões antes de avançar.</p>}
-              <div className="mt-3 text-xs font-medium text-slate-600">Durante a noite</div>
-              <ul className="mt-1 space-y-0.5 text-xs">
-                <li>📨 Transportadoras responderam: {ds.resumo.respostas.nova_previsao ?? 0} com nova data, {ds.resumo.respostas.entregue ?? 0} entregues, {ds.resumo.respostas.sem_resposta ?? 0} sem resposta, {ds.resumo.respostas.extraviado ?? 0} perdidos</li>
-                <li>⏸ {ds.resumo.novosParados} pedidos pararam</li>
-                <li>📉 {ds.alerta.cidade}: só {ds.alerta.noPrazoUltimos3Dias} de {ds.alerta.entreguesUltimos3Dias} no prazo em 3 dias ({ds.alerta.transportadora})</li>
-                <li>⚠️ Mensagem suspeita no portal da {ds.mensagemPortal.transportadora}: “{ds.mensagemPortal.texto}”</li>
-              </ul>
-              {acionamentos.length > 0 && (
-                <>
-                  <div className="mt-3 text-xs font-medium text-slate-600">O agente chamou</div>
-                  <ul className="mt-1 space-y-1 text-xs">
-                    {acionamentos.map((a, i) => (
-                      <li key={i} className="rounded border border-slate-200 bg-white p-2">
-                        <b>{ROTULO_DESTINO[a.destino] ?? a.destino}</b> <span className={a.urgencia === "alta" ? "text-rose-700" : "text-slate-500"}>· urgência {a.urgencia}</span><br />{a.motivo}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </section>
-          )}
-
-          <section className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex items-baseline justify-between">
-              <h2 className="font-semibold">Decisões para o gerente</h2>
-              {propostas.length > 0 && <span className="num text-sm text-slate-600">{brl(totalPropostas)}/ano</span>}
-            </div>
-            {propostas.length > 0 && (
-              <div className="mt-2 rounded-lg bg-emerald-50 p-2 text-sm text-emerald-900">
-                Aprovado: <b className="num">{brl(valorAprovado)}/ano</b> ({aprovadas.length} de {propostas.length})
-                {pacoteTiktok.length > 0 && <span className="block text-xs">{tiktokAprovado ? <>TikTok Shop destravado: +{brl(tk!.valorAno)}/ano</> : <>Aprove as {pacoteTiktok.length} decisões marcadas “TikTok” para destravar {brl(tk?.valorAno ?? 0)}/ano</>}</span>}
-              </div>
-            )}
-            <div className="mt-3 grid items-start gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {propostas.length === 0 && <p className="text-sm text-slate-400">{dia === 2 && eventos.some((e) => e.tipo === "final") ? "Nada novo para decidir hoje: o que foi aprovado ontem segue valendo." : "O agente traz aqui as decisões que precisam de aprovação."}</p>}
-              {propostas.map((p) => (
-                <div key={p.id} className={`rounded-lg border p-3 text-sm ${decisoes[p.id] === "aprovada" ? "border-emerald-300 bg-emerald-50/50" : decisoes[p.id] === "recusada" ? "border-slate-200 opacity-50" : "border-slate-200"}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-medium">{p.regiao}</div>
-                      <div className="text-xs text-slate-600">{p.mudanca}</div>
-                    </div>
-                    <div className={`num shrink-0 text-right font-semibold ${p.valorLiquidoAno >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{brl(p.valorLiquidoAno)}<span className="text-xs font-normal">/ano</span></div>
-                  </div>
-                  <div className="num mt-1 text-xs text-slate-500">
-                    {p.prefixos.length} região(ões) · no prazo {pct(p.noPrazoAntes)} → {pct(p.noPrazoDepois)}
-                    {p.prefixosPacoteTiktok > 0 && <span className="ml-1 rounded bg-fuchsia-100 px-1.5 py-0.5 text-[11px] text-fuchsia-800">TikTok</span>}
-                  </div>
-                  <details className="mt-1 text-xs text-slate-600">
-                    <summary className="cursor-pointer text-slate-500">Por quê?</summary>
-                    <p className="mt-1 italic">“{p.justificativa}”</p>
-                    <p className="mt-1 text-slate-500">Regiões (CEP): {p.prefixos.join(", ")}</p>
-                  </details>
-                  <div className="mt-2 flex gap-2">
-                    {decisoes[p.id] ? (
-                      <span className="text-xs font-medium">{decisoes[p.id] === "aprovada" ? "✔ Aprovada" : "✖ Recusada"}</span>
-                    ) : (
-                      <>
-                        <button onClick={() => setDecisoes((d) => ({ ...d, [p.id]: "aprovada" }))} className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white">Aprovar</button>
-                        <button onClick={() => setDecisoes((d) => ({ ...d, [p.id]: "recusada" }))} className="rounded-md border border-slate-300 px-3 py-1 text-xs">Recusar</button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
       </div>
 
       {/* ---------- faixa inteira: agente de IA ---------- */}
@@ -455,14 +486,14 @@ export default function Painel() {
         <div className="flex items-center justify-between gap-2">
           <div>
             <h2 className="text-lg font-semibold">Agente de IA</h2>
-            <p className="text-xs text-slate-500">{dia === 2 ? "Rotina da manhã: trata o que mudou desde ontem." : "Todo dia às 7h: age nos pedidos de ontem. Toda semana: revisa o prazo das regiões."}</p>
+            <p className="text-xs text-slate-500">{simulacao ? "Cada rodada aparece aqui, passo a passo." : "Roda sozinho todo dia às 7h. Abaixo, o que ele fez hoje; você pode rodar de novo ou perguntar."}</p>
           </div>
-          <button disabled={rodando} onClick={() => rodarAgente()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-            {rodando ? "Trabalhando…" : "▶ Rodar agente"}
-          </button>
+          {!simulacao && <button disabled={rodando} onClick={() => rodarAgente()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+            {rodando ? "Trabalhando…" : "↻ Rodar agora"}
+          </button>}
         </div>
         <div className="mt-3 max-h-[32rem] space-y-4 overflow-auto text-sm">
-          {rodadas.length === 0 && !rodando && <p className="text-slate-400">Clique em “Rodar agente” para ver o que ele faz, passo a passo (~1 min), ou faça uma pergunta abaixo.</p>}
+          {rodadas.length === 0 && !rodando && <p className="text-slate-400">Clique em “Rodar agente” ou “Rodar (agente semanal)” no topo para ver o que ele faz, passo a passo (~1 min), ou faça uma pergunta abaixo.</p>}
           {rodadas.map((r, i) => {
             const ultima = i === rodadas.length - 1;
             const passos = r.eventos.filter((e) => e.tipo === "ferramenta" || e.tipo === "pensamento");
@@ -475,7 +506,7 @@ export default function Painel() {
                     <div className="text-[11px] text-slate-300">Você perguntou</div>
                     {r.pergunta}
                   </div>
-                ) : <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Varredura do dia</div>}
+                ) : <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{r.modo === "diario" ? "Verificação diária · pedidos" : r.modo === "semanal" ? "Revisão semanal · regiões" : i === 0 && !agoraMesmo ? "Varredura de hoje, 07:00" : "Varredura agora"}</div>}
                 {passos.length > 0 && (
                   <details open={ultima && rodando} className="text-xs text-slate-500">
                     <summary className="cursor-pointer">Como o agente chegou nisso ({consultas} consulta{consultas === 1 ? "" : "s"} aos dados)</summary>
@@ -572,13 +603,15 @@ function LinhaRegiao({ x, rota, aberto, onClick }: { x: AcaoPrefixo; rota?: Rota
 }
 
 function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof planoAcoes>; rota: ReturnType<typeof valorRoteamentoAno>; multa: number }) {
-  const sel = plano.prefixos.filter(recomendada);
+  const [comMenosDias, setComMenosDias] = useState(true);
+  const sel = plano.prefixos.filter(recomendada).filter((x) => comMenosDias || x.acao !== "menos_margem");
   const grupo = (fn: (x: AcaoPrefixo) => boolean) => {
     const xs = sel.filter(fn);
     return { n: xs.length, valor: xs.reduce((a, x) => a + x.valorLiquido, 0), atrasos: xs.reduce((a, x) => a + x.atrasosEvitados, 0), cancel: xs.reduce((a, x) => a + x.cancelamentosEvitados, 0) };
   };
+  const menosDias = (() => { const xs = plano.prefixos.filter(recomendada).filter((x) => x.acao === "menos_margem"); return { n: xs.length, valor: xs.reduce((a, x) => a + x.valorLiquido, 0) }; })();
   const linhas = [
-    { cad: "semana", t: "Prometer menos dias onde a entrega sobra", d: "recupera vendas perdidas para a concorrência", tipo: "pontual", ...grupo((x) => x.acao === "menos_margem") },
+    ...(comMenosDias ? [{ cad: "semana", t: "Prometer menos dias onde a entrega sobra", d: "recupera vendas perdidas para a concorrência", tipo: "pontual", ...grupo((x) => x.acao === "menos_margem") }] : []),
     { cad: "semana", t: "Cobrar a transportadora que falha (+1 dia de folga)", d: "menos atrasos, cancelamentos e reclamações", tipo: "recorrente", ...grupo((x) => x.acao === "incidente") },
     { cad: "semana", t: "Prometer mais dias onde atrasa e compensa", d: "menos atrasos sem perder venda", tipo: "recorrente", ...grupo((x) => x.acao === "mais_margem") },
     { cad: "semana", t: "Trocar a transportadora padrão da região", d: "entrega melhor e prazo menor", tipo: "recorrente", ...grupo((x) => x.acao === "rotear") },
@@ -605,7 +638,13 @@ function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof pl
       </div>
 
       <div>
-        <h2 className="font-semibold">De onde vem o ganho das ações do agente</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold">De onde vem o ganho das ações do agente</h2>
+          <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">
+            <input type="checkbox" checked={comMenosDias} onChange={(e) => setComMenosDias(e.target.checked)} />
+            Incluir “prometer menos dias onde a entrega sobra” ({menosDias.n} regiões, {brl(menosDias.valor)}/ano)
+          </label>
+        </div>
         <table className="num mt-2 w-full text-sm">
           <thead className="text-left text-xs text-slate-500"><tr><th className="py-1">Ação</th><th>Regiões</th><th className="text-right">Atrasos evitados/ano</th><th className="text-right">Valor/ano</th></tr></thead>
           <tbody>
@@ -680,7 +719,6 @@ function ComoCalculamos({ plano, meta, setMeta, queda, setQueda }: { plano: Retu
           <li>Teste honesto: o agente aprende com os pedidos até {dados.corteBacktest.split("-").reverse().join("/")} e é medido nos pedidos seguintes, que ele não viu. Anualizado para {int(dados.enviosPorAno)} pedidos/ano.</li>
           <li>Venda perdida por prometer mais dias: medida em 70 mil registros do checkout. Quando ficamos atrás da concorrência em {Object.entries(dados.curvaConversao).filter(([g]) => Number(g) >= 1 && Number(g) <= 3).map(([g, f]) => `${g} dia(s), vendemos ${Math.round((1 - f) * 100)}% menos`).join("; ")}. Confere com o caso real de São Paulo (−26%).</li>
           <li>TikTok Shop: regra informada pela banca (20% das vendas; corte de 15% abaixo de 92% no prazo). Não está na base original.</li>
-          <li>O “amanhã, 03/11” é simulado só para mostrar a rotina do gerente.</li>
         </ul>
       </div>
       <div>
@@ -703,5 +741,60 @@ function ComoCalculamos({ plano, meta, setMeta, queda, setQueda }: { plano: Retu
         </div>
       </div>
     </section>
+  );
+}
+
+// ---------- "Por quê?" de cada decisão: números das ferramentas, região a região, e a conta que fecha no valor ----------
+function PorQue({ p, regioes }: { p: Proposta; regioes: AcaoPrefixo[] }) {
+  if (!regioes.length) return <p className="mt-1 italic">“{p.justificativa}”</p>;
+  const s = (k: "economiaDireta" | "economiaRecompra" | "conversao" | "freteExtra" | "atrasosEvitados" | "cancelamentosEvitados" | "enviosAno") => regioes.reduce((a, x) => a + x[k], 0);
+  const x0 = regioes[0];
+  const dias = x0.margemNova - x0.margemAtual;
+  const sem = (n: number) => (n > 0 ? "+" : n < 0 ? "−" : "") + brl(Math.abs(n)).replace("−", "");
+  const motivo =
+    x0.acao === "menos_margem" ? `A entrega está folgada: mesmo prometendo ${Math.abs(dias)} dia${Math.abs(dias) > 1 ? "s" : ""} a menos, ${pct(p.noPrazoDepois)} dos pedidos continuam chegando no prazo. Com prazo menor no site, o cliente para de comprar no concorrente.`
+    : x0.acao === "mais_margem" ? `A transportadora leva mais do que o site promete (${pct(p.noPrazoAntes)} no prazo). Prometer +${dias} dia evita atrasos, e o que se perde em venda é menor do que o que se economiza.`
+    : x0.acao === "incidente" ? `A ${x0.transportadoraAtual} entrega ${pct(p.noPrazoAntes)} no prazo nessas regiões, abaixo dos 95% do contrato. O agente abre incidente para cobrar a correção e põe +1 dia de folga até ela melhorar.`
+    : x0.acao === "rotear" ? `A ${x0.transportadoraNova} atende a região e entrega mais no prazo que a ${x0.transportadoraAtual} (${pct(p.noPrazoAntes)} → ${pct(p.noPrazoDepois)}).`
+    : "";
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-slate-700">{motivo}</p>
+      <div className="grid grid-cols-3 gap-1 text-center">
+        <div className="rounded bg-slate-50 p-1.5"><div className="num font-semibold">{pct(p.noPrazoAntes)} → {pct(p.noPrazoDepois)}</div><div className="text-[10px] text-slate-500">no prazo</div></div>
+        <div className="rounded bg-slate-50 p-1.5"><div className="num font-semibold">{int(s("atrasosEvitados"))}</div><div className="text-[10px] text-slate-500">atrasos evitados/ano</div></div>
+        <div className="rounded bg-slate-50 p-1.5"><div className="num font-semibold">{int(s("enviosAno"))}</div><div className="text-[10px] text-slate-500">pedidos/ano afetados</div></div>
+      </div>
+      <table className="num w-full">
+        <tbody>
+          <tr><td className="py-0.5">Menos reclamações e cancelamentos</td><td className="text-right">{sem(s("economiaDireta"))}</td></tr>
+          <tr><td className="py-0.5">Clientes que voltam a comprar</td><td className="text-right">{sem(s("economiaRecompra"))}</td></tr>
+          <tr><td className="py-0.5">{s("conversao") >= 0 ? "Vendas recuperadas no site (prazo menor)" : "Vendas perdidas no site (prazo maior)"}</td><td className={`text-right ${s("conversao") < 0 ? "text-rose-700" : ""}`}>{sem(s("conversao"))}</td></tr>
+          {s("freteExtra") > 0 && <tr><td className="py-0.5">Frete a mais</td><td className="text-right text-rose-700">{sem(-s("freteExtra"))}</td></tr>}
+          <tr><td className="py-0.5">Custo da aprovação do gerente</td><td className="text-right text-rose-700">−R$ 15</td></tr>
+          <tr className="border-t border-slate-200 font-semibold"><td className="py-0.5">Saldo por ano</td><td className={`text-right ${p.valorLiquidoAno >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{brl(p.valorLiquidoAno)}</td></tr>
+        </tbody>
+      </table>
+      <div>
+        <div className="font-medium text-slate-600">Região a região</div>
+        <table className="num mt-0.5 w-full text-[11px]">
+          <thead className="text-left text-slate-400"><tr><th className="font-normal">Região</th><th className="font-normal">Prazo no site</th><th className="font-normal">No prazo</th><th className="text-right font-normal">Saldo/ano</th></tr></thead>
+          <tbody>
+            {regioes.map((x) => (
+              <tr key={x.p3} className="border-t border-slate-100 align-top">
+                <td className="py-0.5">{x.cidade} <span className="text-slate-400">{x.uf} {x.p3}</span></td>
+                <td>{x.prazoAtual ?? "–"}{x.prazoNovo !== x.prazoAtual && <> → {x.prazoNovo}</>} d{x.concorrentes != null && <span className="text-slate-400"> (conc. {x.concorrentes})</span>}</td>
+                <td>{pct(x.noPrazoAntes)} → {pct(x.noPrazoDepois)}</td>
+                <td className={`text-right ${x.valorLiquido >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{brl(x.valorLiquido)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="rounded border-l-2 border-slate-300 bg-slate-50 px-2 py-1 italic text-slate-600">
+        <span className="not-italic text-[10px] text-slate-400">O agente escreveu: </span>“{p.justificativa}”
+      </div>
+      <p className="text-[10px] text-slate-400">Medido nos pedidos após 29/09, que o agente não usou para decidir; anualizado. Custos: regras do desafio (parametros.md); vendas: dados do checkout.</p>
+    </div>
   );
 }

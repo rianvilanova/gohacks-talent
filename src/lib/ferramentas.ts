@@ -3,12 +3,14 @@
 import dadosJson from "@/data/radar.json";
 import diaSeguinteJson from "@/data/dia_seguinte.json";
 import {
-  type Dados, type AcaoPrefixo, planoAcoes, resumir, recomendada, ehAcaoReal, custo, comMargem, fatorAno,
+  type Dados, reduzirImpactoSP, type AcaoPrefixo, planoAcoes, resumir, recomendada, ehAcaoReal, custo, comMargem, fatorAno,
   noPrazo, total, valorMedio, faixasResumo, efeitoConversao, ROTULO_ACAO,
   type Torre, type Roteamento, veredito, ROTULO_VEREDITO, rotearNaoPostados, valorRoteamentoAno,
 } from "@/lib/radar";
 
+const dadosOriginal = dadosJson as unknown as Dados & { torre: Torre };
 export const dados = dadosJson as unknown as Dados & { torre: Torre };
+const dadosSemSp = reduzirImpactoSP(dadosOriginal); // opção da simulação: SP com 50% do efeito de vendas
 export const CUSTO_APROVACAO = 15; // R$ por aprovação do gerente (politicas.csv)
 export const MAX_CHAMADOS_DIA = 80;
 
@@ -27,7 +29,7 @@ export type Acionamento = { destino: string; motivo: string; urgencia: string };
 const r0 = (x: number) => Math.round(x);
 const pct = (x: number) => Math.round(x * 1000) / 10;
 
-export type Contexto = { meta: number; sensibilidade: number; tiktok?: boolean; dia?: 1 | 2; aprovadasOntem?: string[] };
+export type Contexto = { meta: number; sensibilidade: number; tiktok?: boolean; dia?: 1 | 2; aprovadasOntem?: string[]; base?: "original" | "sem_sp" };
 export type Proposta = {
   id: string; prefixos: string[]; regiao: string; tipo: string; mudanca: string;
   justificativa: string; valorLiquidoAno: number; atrasosEvitadosAno: number; cancelamentosEvitadosAno: number;
@@ -153,6 +155,7 @@ export const DEFINICOES = [
 ] as const;
 
 export function criarExecutor(ctx: Contexto) {
+  const dados = ctx.base === "sem_sp" ? dadosSemSp : dadosOriginal;
   const plano = planoAcoes(dados, ctx.meta, ctx.sensibilidade, ctx.tiktok ?? false);
   const porP3 = new Map(plano.prefixos.map((x) => [x.p3, x]));
   const propostas: Proposta[] = [];
