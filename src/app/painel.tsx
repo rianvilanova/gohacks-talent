@@ -58,7 +58,7 @@ function Kpi({ titulo, valor, sub, destaque }: { titulo: string; valor: string; 
 
 export default function Painel() {
   const [meta, setMeta] = useState(0.95);
-  const [queda, setQueda] = useState(0.065);
+  const [queda, setQueda] = useState(1); // sensibilidade à curva de conversão medida
   const [filtro, setFiltro] = useState<Acao | "todas" | "recomendadas">("recomendadas");
   const [aberto, setAberto] = useState<string | null>(null);
 
@@ -81,7 +81,7 @@ export default function Painel() {
     try {
       const r = await fetch("/api/agente", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meta, quedaConversaoPorDia: queda, pergunta: textoPergunta }),
+        body: JSON.stringify({ meta, sensibilidade: queda, pergunta: textoPergunta }),
       });
       if (!r.body) throw new Error(`HTTP ${r.status}`);
       const leitor = r.body.getReader(), dec = new TextDecoder();
@@ -294,13 +294,14 @@ export default function Painel() {
           <label className="flex flex-col gap-1">
             <span className="text-xs text-slate-500">Cliente desiste com prazo maior?</span>
             <select className="rounded-lg border border-slate-300 bg-white px-2 py-1.5" value={queda} onChange={(e) => setQueda(Number(e.target.value))}>
-              <option value={0}>Não (0% por dia)</option>
-              <option value={0.03}>Um pouco (−3% de conversão por dia)</option>
-              <option value={0.065}>Como em SP (−6,5% por dia)</option>
+              <option value={1}>Sim, pela curva medida no checkout</option>
+              <option value={0.5}>Metade da curva medida</option>
+              <option value={0}>Ignorar (não perde venda)</option>
             </select>
           </label>
           <p className="max-w-md text-xs text-slate-500">
-            Padrão: meta de 95% por prefixo e −6,5% de conversão por dia de prazo a mais que a concorrência, estimado pelo caso real de SP capital (+2 dias em 01/10).
+            Padrão: meta de 95% por prefixo e perda de venda pela curva medida no checkout (70 mil registros): conversão quando nosso prazo fica atrás da concorrência em{" "}
+            {Object.entries(dados.curvaConversao).filter(([g]) => Number(g) >= 1 && Number(g) <= 3).map(([g, f]) => `+${g} dia(s): ${Math.round((f - 1) * 100)}%`).join(" · ")}.
           </p>
         </div>
       </details>

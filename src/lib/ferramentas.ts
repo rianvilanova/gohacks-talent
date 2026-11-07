@@ -3,7 +3,7 @@
 import dadosJson from "@/data/radar.json";
 import {
   type Dados, type AcaoPrefixo, planoAcoes, resumir, recomendada, ehAcaoReal, custo, comMargem, fatorAno,
-  noPrazo, total, valorMedio, faixasResumo, PARAMS, ROTULO_ACAO,
+  noPrazo, total, valorMedio, faixasResumo, efeitoConversao, ROTULO_ACAO,
 } from "@/lib/radar";
 
 export const dados = dadosJson as unknown as Dados;
@@ -11,7 +11,7 @@ export const dados = dadosJson as unknown as Dados;
 const r0 = (x: number) => Math.round(x);
 const pct = (x: number) => Math.round(x * 1000) / 10;
 
-export type Contexto = { meta: number; quedaConversaoPorDia: number };
+export type Contexto = { meta: number; sensibilidade: number };
 export type Proposta = {
   id: string; prefixos: string[]; regiao: string; tipo: string; mudanca: string;
   justificativa: string; valorLiquidoAno: number; atrasosEvitadosAno: number; cancelamentosEvitadosAno: number;
@@ -88,7 +88,7 @@ export const DEFINICOES = [
 ] as const;
 
 export function criarExecutor(ctx: Contexto) {
-  const plano = planoAcoes(dados, ctx.meta, ctx.quedaConversaoPorDia);
+  const plano = planoAcoes(dados, ctx.meta, ctx.sensibilidade);
   const porP3 = new Map(plano.prefixos.map((x) => [x.p3, x]));
   const propostas: Proposta[] = [];
   const fator = fatorAno(dados);
@@ -97,7 +97,7 @@ export function criarExecutor(ctx: Contexto) {
     resumo_geral: () => {
       const pot = resumir(plano, ehAcaoReal), rec = resumir(plano, recomendada);
       return {
-        meta_por_prefixo_pct: pct(ctx.meta), queda_conversao_por_dia_pct: pct(ctx.quedaConversaoPorDia),
+        meta_por_prefixo_pct: pct(ctx.meta), curva_conversao_medida_gap_vs_concorrente: dados.curvaConversao, sensibilidade: ctx.sensibilidade,
         hoje: { no_prazo_pct: pct(plano.antes.noPrazo), atrasos_ano: r0(plano.antes.atrasos), cancelamentos_ano: r0(plano.antes.cancelamentos), custo_direto_rs_ano: r0(plano.antes.direto), custo_com_recompra_rs_ano: r0(plano.antes.total), por_faixa: faixasResumo(plano.antes) },
         potencial_plano_completo: { prefixos: pot.prefixos, no_prazo_pct: pct(pot.noPrazoDepois), atrasos_evitados_ano: r0(pot.atrasosEvitados), cancelamentos_evitados_ano: r0(pot.cancelamentosEvitados), economia_atrasos_rs_ano: r0(pot.economiaTotal), efeito_conversao_rs_ano: r0(pot.conversao), valor_liquido_rs_ano: r0(pot.valorLiquido) },
         recomendado_saldo_positivo: { prefixos: rec.prefixos, no_prazo_pct: pct(rec.noPrazoDepois), atrasos_evitados_ano: r0(rec.atrasosEvitados), cancelamentos_evitados_ano: r0(rec.cancelamentosEvitados), economia_atrasos_rs_ano: r0(rec.economiaTotal), efeito_conversao_rs_ano: r0(rec.conversao), valor_liquido_rs_ano: r0(rec.valorLiquido) },
@@ -130,9 +130,8 @@ export function criarExecutor(ctx: Contexto) {
       const p = dados.prefixos.find((x) => x.p3 === p3);
       if (!p || !p.regra) return { erro: `prefixo ${p3} sem regra ou sem envios` };
       const antes = custo(p.teste, fator), depois = custo(comMargem(p.base.teste, m), fator);
-      const delta = m - p.regra.margem, ref = p.concorrentesPrazoMediana ?? p.regra.prazo;
-      const atras = (pz: number) => Math.max(0, pz - ref);
-      const conv = total(p.teste) * fator * ctx.quedaConversaoPorDia * (atras(p.regra.prazo) - atras(p.regra.prazo + delta)) * PARAMS.margemContribuicao * valorMedio(p.teste);
+      const delta = m - p.regra.margem;
+      const conv = efeitoConversao(dados, p, delta, total(p.teste) * fator, ctx.sensibilidade);
       return {
         prefixo: p3, margem: `${p.regra.margem} -> ${m}`, prazo_exibido: `${p.regra.prazo} -> ${p.regra.prazo + delta}`, concorrentes_prazo_mediana: p.concorrentesPrazoMediana,
         no_prazo_pct: `${pct(antes.noPrazo)} -> ${pct(depois.noPrazo)}`,

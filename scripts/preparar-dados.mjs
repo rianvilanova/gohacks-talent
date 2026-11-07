@@ -149,6 +149,28 @@ const conc = {};
 for (const r of lerCsv("concorrentes_prazos.csv")) (conc[r.cep.slice(0, 3)] ??= []).push(Number(r.prazo_dias_uteis));
 const mediana = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; };
 
+// ---------- 7. curva de conversão: quanto cai quando nosso prazo fica atrás do concorrente ----------
+// Medida no checkout_conversao (todas as sessões): gap = prazo exibido - mediana do prazo dos concorrentes no prefixo.
+// Calculada separado para frete pago e grátis (evita misturar os dois) e relativa ao gap 0.
+const concMed = Object.fromEntries(Object.entries(conc).map(([k, a]) => [k, mediana(a)]));
+const GMIN = -2, GMAX = 5, acc = {};
+for (const r of lerCsv("checkout_conversao.csv")) {
+  const c = concMed[r.prefixo_cep3]; if (c == null) continue;
+  const g = Math.max(GMIN, Math.min(GMAX, Number(r.prazo_exibido_dias_uteis) - c));
+  const k = (Number(r.frete_exibido) > 0 ? "pago" : "gratis") + "|" + g;
+  const a = (acc[k] ??= [0, 0]); a[0] += Number(r.sessoes_checkout); a[1] += Number(r.pedidos);
+}
+const curvaConversao = {};
+for (let g = GMIN; g <= GMAX; g++) {
+  let peso = 0, rel = 0;
+  for (const t of ["pago", "gratis"]) {
+    const a = acc[t + "|" + g], z = acc[t + "|0"]; if (!a || !z) continue;
+    rel += ((a[1] / a[0]) / (z[1] / z[0])) * a[0]; peso += a[0];
+  }
+  curvaConversao[g] = Math.round((rel / peso) * 1000) / 1000;
+}
+console.log("curva de conversão (gap -> relativa ao gap 0):", JSON.stringify(curvaConversao));
+
 // ---------- saída ----------
 const prefixos = Object.entries(pref).map(([p3, P]) => {
   const cidade = Object.entries(P.cidades).sort((a, b) => b[1] - a[1])[0][0];
@@ -176,7 +198,7 @@ const saida = {
   enviosSemRastreio: semRastreio,
   janelaPortais: [PORTAL_INICIO, EXPORTACAO],
   enviosPorAno: Math.round((envios.length * 6 * 365) / 90), // amostra 1 em 6, 90 dias
-  geral, porTransp, prefixos,
+  curvaConversao, geral, porTransp, prefixos,
 };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(saida));

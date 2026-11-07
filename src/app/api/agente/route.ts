@@ -21,7 +21,7 @@ type Msg = { role: string; content?: string | null; tool_calls?: { id: string; f
 export async function POST(req: Request) {
   const corpo = await req.json().catch(() => ({}));
   const meta = Math.min(0.99, Math.max(0.85, Number(corpo.meta ?? 0.95)));
-  const queda = Math.min(0.2, Math.max(0, Number(corpo.quedaConversaoPorDia ?? 0.065)));
+  const sensibilidade = Math.min(1, Math.max(0, Number(corpo.sensibilidade ?? 1)));
   const pergunta = typeof corpo.pergunta === "string" && corpo.pergunta.trim() ? corpo.pergunta.slice(0, 1000) : null;
 
   const chave = process.env.AI_PROXY_API_KEY;
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   const modelo = process.env.AI_MODEL ?? "latest";
   if (!chave) return Response.json({ erro: "AI_PROXY_API_KEY não configurada" }, { status: 500 });
 
-  const exec = criarExecutor({ meta, quedaConversaoPorDia: queda });
+  const exec = criarExecutor({ meta, sensibilidade });
   const msgs: Msg[] = [{ role: "system", content: SISTEMA }, { role: "user", content: pergunta ?? VARREDURA }];
   const enc = new TextEncoder();
 

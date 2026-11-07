@@ -20,6 +20,7 @@ export type Prefixo = {
 
 export type Dados = {
   corteBacktest: string; enviosNaAmostra: number; enviosComEntrega: number; enviosPorAno: number;
+  curvaConversao: Record<string, number>; // gap de prazo vs concorrente (dias) -> conversão relativa ao gap 0, medida no checkout
   geral: { todos: Hist; treino: Hist; teste: Hist };
   porTransp: Record<string, Hist>;
   prefixos: Prefixo[];
@@ -112,6 +113,16 @@ export function vendaPerdida(p: Prefixo, k: number, fator: number) {
   return { diasAtras, pedidos, reais: pedidos * PARAMS.margemContribuicao * valorMedio(p.teste) };
 }
 
+/** Efeito em R$/ano (margem de contribuição) de mudar o prazo exibido em delta dias, pela curva medida no checkout. */
+export function efeitoConversao(d: Dados, p: Prefixo, delta: number, enviosAno: number, sensibilidade = 1) {
+  if (!delta || !p.regra) return 0;
+  const c = d.curvaConversao, ks = Object.keys(c).map(Number), lo = Math.min(...ks), hi = Math.max(...ks);
+  const f = (g: number) => c[String(Math.max(lo, Math.min(hi, g)))] ?? 1;
+  const gap = p.regra.prazo - (p.concorrentesPrazoMediana ?? p.regra.prazo);
+  const fator = f(gap + delta) / f(gap) - 1; // ex.: -0,15 = 15% menos pedidos
+  return enviosAno * sensibilidade * fator * PARAMS.margemContribuicao * valorMedio(p.teste);
+}
+
 export type Plano = {
   meta: number;
   antes: Custo; depois: Custo;
@@ -181,7 +192,7 @@ export type AcaoPrefixo = {
 };
 
 export type PlanoAcoes = {
-  meta: number; quedaConversaoPorDia: number;
+  meta: number; sensibilidade: number;
   antes: Custo; depois: Custo;
   atrasosEvitados: number; cancelamentosEvitados: number;
   economiaDireta: number; economiaTotal: number; conversao: number; freteExtra: number; valorLiquido: number;
@@ -199,7 +210,7 @@ function margemParaMeta(b: Hist, meta: number, max: number): number | null {
  * Para cada prefixo: aprende no treino a menor margem que cumpre a meta (pode ser menor que a atual)
  * e se outra transportadora que atende a região cumpre com menos margem; avalia no teste e anualiza.
  */
-export function planoAcoes(d: Dados, meta = 0.95, quedaConversaoPorDia = PARAMS.quedaConversaoPorDia): PlanoAcoes {
+export function planoAcoes(d: Dados, meta = 0.95, sensibilidade = 1): PlanoAcoes {
   const fator = fatorAno(d);
   const lista: AcaoPrefixo[] = [];
   const hsAntes: Hist[] = [], hsDepois: Hist[] = [];
@@ -233,13 +244,9 @@ export function planoAcoes(d: Dados, meta = 0.95, quedaConversaoPorDia = PARAMS.
       else if (m < cur) { acao = "menos_margem"; hDepois = comMargem(p.base.teste, m); }
     }
     const depois = custo(hDepois, fator);
-    // conversão: só contam os dias em que ficamos atrás da mediana dos concorrentes
-    let conversao = 0;
-    if (prazo !== null && m !== cur) {
-      const ref = p.concorrentesPrazoMediana ?? prazo;
-      const atrasAntes = Math.max(0, prazo - ref), atrasDepois = Math.max(0, prazo + (m - cur) - ref);
-      conversao = enviosAno * quedaConversaoPorDia * (atrasAntes - atrasDepois) * PARAMS.margemContribuicao * vm;
-    }
+    // conversão: curva medida no checkout (nosso prazo vs concorrentes)
+    const conversao = prazo !== null && m !== cur ? efeitoConversao(d, p, m - cur, enviosAno, sensibilidade) : 0;
+    void vm;
     const economiaDireta = antes.direto - depois.direto, economiaTotal = antes.total - depois.total;
     hsAntes.push(p.teste); hsDepois.push(hDepois);
     lista.push({
@@ -259,7 +266,7 @@ export function planoAcoes(d: Dados, meta = 0.95, quedaConversaoPorDia = PARAMS.
   lista.forEach((x) => contagem[x.acao]++);
   const conversao = s("conversao"), freteExtra = s("freteExtra");
   return {
-    meta, quedaConversaoPorDia, antes: A, depois: D,
+    meta, sensibilidade, antes: A, depois: D,
     atrasosEvitados: A.atrasos - D.atrasos, cancelamentosEvitados: A.cancelamentos - D.cancelamentos,
     economiaDireta: A.direto - D.direto, economiaTotal: A.total - D.total, conversao, freteExtra,
     valorLiquido: A.total - D.total + conversao - freteExtra, contagem,
