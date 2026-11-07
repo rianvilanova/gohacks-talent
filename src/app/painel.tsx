@@ -66,7 +66,7 @@ function passoDoAgente(e: Extract<Evento, { tipo: "ferramenta" }>) {
   }
 }
 
-type Aba = "regioes" | "pedidos" | "calculo";
+type Aba = "regioes" | "pedidos" | "impacto";
 
 export default function Painel() {
   const [meta, setMeta] = useState(0.95);
@@ -190,7 +190,7 @@ export default function Painel() {
         {/* ---------- esquerda: abas ---------- */}
         <div className="lg:col-span-3">
           <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm">
-            {([["regioes", "Regiões"], ["pedidos", "Pedidos de hoje"]] as [Aba, string][]).map(([k, t]) => (
+            {([["regioes", "Regiões"], ["pedidos", "Pedidos de hoje"], ["impacto", "Impacto financeiro"]] as [Aba, string][]).map(([k, t]) => (
               <button key={k} onClick={() => setAba(k)} className={`flex-1 rounded-lg px-3 py-2 ${aba === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{t}</button>
             ))}
           </div>
@@ -232,6 +232,8 @@ export default function Painel() {
               <p className="mt-2 text-[11px] text-slate-400">Clique numa região para ver o detalhe.</p>
             </section>
           )}
+
+          {aba === "impacto" && <ImpactoFinanceiro plano={plano} rota={previaRota} multa={multaTotal} />}
 
           {aba === "pedidos" && (
             <section className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
@@ -485,6 +487,72 @@ function LinhaRegiao({ x, rota, aberto, onClick }: { x: AcaoPrefixo; rota?: Rota
         </tr>
       )}
     </>
+  );
+}
+
+function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof planoAcoes>; rota: ReturnType<typeof valorRoteamentoAno>; multa: number }) {
+  const sel = plano.prefixos.filter(recomendada);
+  const grupo = (fn: (x: AcaoPrefixo) => boolean) => {
+    const xs = sel.filter(fn);
+    return { n: xs.length, valor: xs.reduce((a, x) => a + x.valorLiquido, 0), atrasos: xs.reduce((a, x) => a + x.atrasosEvitados, 0), cancel: xs.reduce((a, x) => a + x.cancelamentosEvitados, 0) };
+  };
+  const linhas = [
+    { t: "Prometer menos dias onde a entrega sobra", d: "recupera vendas perdidas para a concorrência", tipo: "pontual", ...grupo((x) => x.acao === "menos_margem") },
+    { t: "Cobrar a transportadora que falha (+1 dia de folga)", d: "menos atrasos, cancelamentos e reclamações", tipo: "recorrente", ...grupo((x) => x.acao === "incidente") },
+    { t: "Prometer mais dias onde atrasa e compensa", d: "menos atrasos sem perder venda", tipo: "recorrente", ...grupo((x) => x.acao === "mais_margem") },
+    { t: "Trocar a transportadora padrão da região", d: "entrega melhor e prazo menor", tipo: "recorrente", ...grupo((x) => x.acao === "rotear") },
+    { t: "Multa de atraso prevista nos contratos", d: "cobrança que hoje não é feita", tipo: "recorrente", n: 5, valor: multa, atrasos: 0, cancel: 0 },
+  ];
+  const total = linhas.reduce((a, l) => a + l.valor, 0);
+  const tk = plano.tiktok;
+  const c = plano.antes;
+  return (
+    <section className="mt-3 space-y-5 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+      <div>
+        <h2 className="font-semibold">Quanto custam os atrasos hoje</h2>
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          {[["Atendimento (clientes que reclamam)", c.contato], ["Compras canceladas", c.cancelamento], ["Clientes que não voltam a comprar", c.recompra]].map(([t, v]) => (
+            <div key={t as string} className="rounded-lg border border-slate-200 p-3">
+              <div className="text-xs text-slate-500">{t}</div>
+              <div className="num text-xl font-semibold">{brl(v as number)}<span className="text-xs font-normal">/ano</span></div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-1 text-xs text-slate-500">Total: <b className="num">{brl(c.total)}/ano</b> com {int(c.atrasos)} pedidos atrasados.</p>
+      </div>
+
+      <div>
+        <h2 className="font-semibold">De onde vem o ganho das ações do agente</h2>
+        <table className="num mt-2 w-full text-sm">
+          <thead className="text-left text-xs text-slate-500"><tr><th className="py-1">Ação</th><th>Regiões</th><th className="text-right">Atrasos evitados/ano</th><th className="text-right">Valor/ano</th></tr></thead>
+          <tbody>
+            {linhas.map((l) => (
+              <tr key={l.t} className="border-t border-slate-100 align-top">
+                <td className="py-2"><div>{l.t}</div><div className="text-[11px] text-slate-400">{l.d} · {l.tipo}</div></td>
+                <td>{l.n || "—"}</td>
+                <td className="text-right">{l.atrasos ? int(l.atrasos) : "—"}</td>
+                <td className={`text-right font-medium ${l.valor >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{brl(l.valor)}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-slate-300 font-semibold">
+              <td className="py-2">Total</td><td>{sel.length}</td>
+              <td className="text-right">{int(linhas.reduce((a, l) => a + l.atrasos, 0))}</td>
+              <td className="text-right text-emerald-700">{brl(total)}/ano</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="mt-1 text-[11px] text-slate-400">“Pontual”: correção feita uma vez e depois só acompanhada. “Recorrente”: depende do trabalho diário do agente.</p>
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+        <div className="font-medium text-slate-700">Fora do total (com mais incerteza)</div>
+        <ul className="mt-1 list-disc space-y-1 pl-5">
+          <li>Troca de transportadora pedido a pedido: {rota.roteados.length} de {int(rota.analisados)} pedidos novos ({Math.round(rota.parcela * 100)}%). Estimativa pelo histórico: ≈ {brl(rota.valorAno)}/ano, mas no teste fora da amostra o ganho não se confirmou com segurança.</li>
+          {tk ? <li>TikTok Shop (regra informada pela banca): {tk.destravado ? <>passar de {pct(tk.regua)} no prazo destrava ≈ {brl(tk.valorAno)}/ano.</> : <>o plano não chega à régua de {pct(tk.regua)}.</>}</li>
+            : <li>TikTok Shop: desligado nas configurações (regra informada pela banca, não medida na base).</li>}
+        </ul>
+      </div>
+    </section>
   );
 }
 
