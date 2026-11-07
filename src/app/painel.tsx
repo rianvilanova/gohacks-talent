@@ -74,7 +74,10 @@ export default function Painel() {
   const [soAcao, setSoAcao] = useState(true);
   const [aberto, setAberto] = useState<string | null>(null);
 
-  const plano = useMemo(() => planoAcoes(dados, meta, queda), [meta, queda]);
+  const [comTiktok, setComTiktok] = useState(false); // padrão: número estável, sem a regra do TikTok (parâmetro da banca)
+  const plano = useMemo(() => planoAcoes(dados, meta, queda, comTiktok), [meta, queda, comTiktok]);
+  const planoTk = useMemo(() => planoAcoes(dados, meta, queda, true), [meta, queda]);
+  const valorComTiktok = useMemo(() => resumir(planoTk, recomendada).valorLiquido + (planoTk.tiktok?.valorAno ?? 0), [planoTk]);
   const pot = useMemo(() => resumir(plano, ehAcaoReal), [plano]);
   const rec = useMemo(() => resumir(plano, recomendada), [plano]);
   const tk = plano.tiktok;
@@ -104,7 +107,7 @@ export default function Painel() {
     try {
       const r = await fetch("/api/agente", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meta, sensibilidade: queda, pergunta: textoPergunta, dia, aprovadasOntem: ontem.map((p) => `${p.id} ${p.regiao}: ${p.mudanca}`) }),
+        body: JSON.stringify({ meta, sensibilidade: queda, tiktok: comTiktok, pergunta: textoPergunta, dia, aprovadasOntem: ontem.map((p) => `${p.id} ${p.regiao}: ${p.mudanca}`) }),
       });
       if (!r.ok || !r.body) { const j = await r.json().catch(() => ({})); throw new Error(j.erro ?? `HTTP ${r.status}`); }
       const leitor = r.body.getReader(), dec = new TextDecoder();
@@ -189,9 +192,17 @@ export default function Painel() {
           <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Quanto vale</div>
           <div className="num mt-1 text-4xl font-bold text-emerald-900">{brl(valorTotal)}</div>
           <div className="text-sm text-emerald-900">por ano, já descontado o que se perde</div>
-          {tk?.valorAno ? <div className="num mt-3 text-xs text-emerald-800">inclui {brl(tk.valorAno)} de vendas recuperadas no TikTok Shop (+{int(tk.pedidosRecuperadosAno)} pedidos/ano)</div> : null}
+          {tk?.valorAno ? <div className="num mt-3 text-xs text-emerald-800">inclui {brl(tk.valorAno)} de vendas recuperadas no TikTok Shop (+{int(tk.pedidosRecuperadosAno)} pedidos/ano)</div>
+            : <div className="mt-3 text-xs text-emerald-800">só com dados medidos na base</div>}
         </div>
       </section>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <button onClick={() => setComTiktok(!comTiktok)}
+          className={`rounded-full border px-3 py-1 ${comTiktok ? "border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800" : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"}`}>
+          {comTiktok ? "✓ Com o efeito TikTok Shop" : `+ Ver com o efeito TikTok Shop (${brl(valorComTiktok)}/ano)`}
+        </button>
+        <span className="text-slate-400">{comTiktok ? "Regra informada pela banca, não medida na base. Clique para voltar ao número estável." : "Opcional: regra informada pela banca (vendas no TikTok caem abaixo de 92% no prazo)."}</span>
+      </div>
       {/* experiência do cliente */}
       <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">

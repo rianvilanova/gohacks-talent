@@ -27,7 +27,7 @@ export type Acionamento = { destino: string; motivo: string; urgencia: string };
 const r0 = (x: number) => Math.round(x);
 const pct = (x: number) => Math.round(x * 1000) / 10;
 
-export type Contexto = { meta: number; sensibilidade: number; dia?: 1 | 2; aprovadasOntem?: string[] };
+export type Contexto = { meta: number; sensibilidade: number; tiktok?: boolean; dia?: 1 | 2; aprovadasOntem?: string[] };
 export type Proposta = {
   id: string; prefixos: string[]; regiao: string; tipo: string; mudanca: string;
   justificativa: string; valorLiquidoAno: number; atrasosEvitadosAno: number; cancelamentosEvitadosAno: number;
@@ -153,7 +153,7 @@ export const DEFINICOES = [
 ] as const;
 
 export function criarExecutor(ctx: Contexto) {
-  const plano = planoAcoes(dados, ctx.meta, ctx.sensibilidade);
+  const plano = planoAcoes(dados, ctx.meta, ctx.sensibilidade, ctx.tiktok ?? false);
   const porP3 = new Map(plano.prefixos.map((x) => [x.p3, x]));
   const propostas: Proposta[] = [];
   const chamados: { id: string; transportadora: string; cod: string; motivo: string }[] = [];
