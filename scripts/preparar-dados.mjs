@@ -54,6 +54,7 @@ const entrega = new Map();
 const norm = (c) => c.trim().toUpperCase(); // portais gravam parte dos códigos em minúsculas/com espaços
 const vistos = new Set(); // códigos com qualquer evento em algum portal (janela de ~60 dias)
 const EXPORTACAO = "2026-11-02"; // portais exportados em 02/11 06:00
+const PORTAL_INICIO = "2026-09-03"; // primeiro evento nos portais (janela de 60 dias)
 const marca = (c, iso) => { const cod = norm(c); if (!entrega.has(cod) || iso < entrega.get(cod)) entrega.set(cod, iso); };
 
 for (const r of lerCsv("portal_expressa_ja.csv")) if (/^ENTREGUE/.test(r.evento)) marca(r.codigo_rastreio, r.data_hora.slice(0, 10));
@@ -89,18 +90,22 @@ const envios = lerCsv("envios.csv");
 const pref = {}; // p3 -> agregados
 const geral = { todos: novoHist(), treino: novoHist(), teste: novoHist() };
 const porTransp = {};
-let casados = 0, semEntrega = 0;
+let casados = 0, semEntrega = 0, semRastreio = 0;
 const envioP3 = new Map();
 for (const e of envios) {
   const p3 = e.cep.slice(0, 3);
   envioP3.set(e.envio_id, p3);
+  // Universo: envios postados dentro da janela dos portais e com data prometida já vencida na exportação.
+  // (Sem esse corte, envios antigos só entravam se a entrega caísse na janela, o que enviesava a conta.)
+  if (!(e.data_postagem >= PORTAL_INICIO && e.data_prometida < EXPORTACAO)) continue;
   const ent = entrega.get(norm(e.codigo_rastreio));
   let atraso, saldo;
   if (ent) { casados++; atraso = ent > e.data_prometida ? diasUteisEntre(e.data_prometida, ent) : 0; saldo = atraso > 0 ? atraso : -diasUteisEntre(ent, e.data_prometida); }
-  else if (vistos.has(norm(e.codigo_rastreio)) && e.data_prometida < EXPORTACAO) {
-    // está no portal, prazo vencido e nunca entregue (extravio, devolução, parado): conta como atraso até a exportação
-    semEntrega++; atraso = Math.max(1, diasUteisEntre(e.data_prometida, EXPORTACAO)); saldo = atraso;
-  } else continue; // fora da janela dos portais ou ainda dentro do prazo
+  else {
+    // sem evento de entrega (extravio, devolução, parado ou nem aparece no portal): atraso até a exportação
+    semEntrega++; if (!vistos.has(norm(e.codigo_rastreio))) semRastreio++;
+    atraso = Math.max(1, diasUteisEntre(e.data_prometida, EXPORTACAO)); saldo = atraso;
+  }
 
   const v = Number(e.valor_pedido);
   const periodo = e.data_pedido.slice(0, 10) < CORTE ? "treino" : "teste";
@@ -168,10 +173,12 @@ const saida = {
   enviosNaAmostra: envios.length,
   enviosComEntrega: casados,
   enviosSemEntregaVencidos: semEntrega,
+  enviosSemRastreio: semRastreio,
+  janelaPortais: [PORTAL_INICIO, EXPORTACAO],
   enviosPorAno: Math.round((envios.length * 6 * 365) / 90), // amostra 1 em 6, 90 dias
   geral, porTransp, prefixos,
 };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(saida));
-console.log(`entregas nos portais: ${entrega.size} | envios casados: ${casados} | sem entrega e vencidos: ${semEntrega} de ${envios.length} | prefixos: ${prefixos.length}`);
+console.log(`entregas nos portais: ${entrega.size} | envios casados: ${casados} | sem entrega e vencidos: ${semEntrega} (sem nenhum evento: ${semRastreio}) de ${envios.length} | prefixos: ${prefixos.length}`);
 console.log(`arquivo: ${OUT} (${(fs.statSync(OUT).size / 1024).toFixed(0)} KB)`);
