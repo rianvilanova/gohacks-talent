@@ -474,9 +474,30 @@ export function valorRoteamentoAno(d: Dados & { torre: Torre }, plano: PlanoAcoe
   const r = rotearNaoPostados(d);
   const dias = new Set(d.torre.naoPostados.map((x) => x[5])).size || 1;
   const fAno = (365 / dias) * 6;
-  const porAtraso = plano.antes.atrasos ? plano.antes.total / plano.antes.atrasos : 0;
+  // validação fora da amostra: a mesma troca, medida no período de teste (após 29/09), entrega quanto do ganho previsto?
+  const porP3 = new Map(d.prefixos.map((p) => [p.p3, p]));
+  let prev = 0, real = 0, nTeste = 0, acertos = 0;
+  for (const x of r.roteados) {
+    const p = porP3.get(x.p3); if (!p?.regra) continue;
+    const A = p.transp[x.de]?.base.teste, B = p.transp[x.para]?.base.teste, slaT = slaDe(p, x.para);
+    if (!A || !B || total(A) < 5 || total(B) < 5 || slaT === null) continue;
+    const m = p.regra.margem, sla0 = slaDe(p, x.de) ?? p.regra.sla;
+    const dr = noPrazo(comMargem(B, m + sla0 - slaT)) - noPrazo(comMargem(A, m));
+    nTeste++; real += dr; prev += x.noPrazoPara - x.noPrazoDe; if (dr > 0) acertos++;
+  }
+  const fatorTeste = prev > 0 ? Math.max(0, Math.min(1, real / prev)) : 0;
+  // regiões cuja ação semanal já é trocar a transportadora padrão: não somar duas vezes
+  const jaNaRegiao = new Set(plano.prefixos.filter((x) => x.selecionada && x.acao === "rotear").map((x) => x.p3));
+  const conta = r.roteados.filter((x) => !jaNaRegiao.has(x.p3));
+  const atrasoHist = conta.reduce((s, x) => s + x.ganhoAtendimento + x.ganhoCancelamento + x.ganhoRecompra, 0) * fAno;
+  const economiaFreteAno = -conta.reduce((s, x) => s + x.freteExtra, 0) * fAno;
   return {
     ...r, parcela: r.analisados ? r.roteados.length / r.analisados : 0,
-    atrasosEvitadosAno: r.atrasosEvitadosFila * fAno, valorAno: r.atrasosEvitadosFila * fAno * porAtraso, freteAno: r.freteExtraFila * fAno,
+    atrasosEvitadosAno: conta.reduce((s, x) => s + x.noPrazoPara - x.noPrazoDe, 0) * fAno * fatorTeste,
+    freteAno: r.freteExtraFila * fAno,
+    valorAtrasoHistoricoAno: atrasoHist, fatorTeste, nTeste, acertosTeste: acertos,
+    ppPrevisto: nTeste ? prev / nTeste : 0, ppTeste: nTeste ? real / nTeste : 0,
+    economiaFreteAno, sobrepostos: r.roteados.length - conta.length,
+    valorAno: atrasoHist * fatorTeste + economiaFreteAno, // conservador: ganho de prazo descontado pelo teste + frete
   };
 }

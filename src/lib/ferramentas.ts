@@ -215,7 +215,7 @@ export function criarExecutor(ctx: Contexto) {
       const pares = r.roteados.reduce((c, x) => { const k = `${x.de} -> ${x.para}`; c[k] = (c[k] ?? 0) + 1; return c; }, {} as Record<string, number>);
       return { ok: true, envios_analisados: r.analisados, roteados: r.roteados.length, barrados_pelo_limite_40pct_uf_dia: r.bloqueadosLimite,
         trocas: pares, atrasos_esperados_evitados_na_fila: Math.round(r.atrasosEvitadosFila * 10) / 10, frete_extra_rs_na_fila: Math.round(r.freteExtraFila),
-        estimativa_anual: { atrasos_evitados: r0(r.atrasosEvitadosAno), valor_rs: r0(r.valorAno), frete_rs: r0(r.freteAno), obs: "estimativa pelo histórico de cada transportadora na região; considera que a data prometida ao cliente foi calculada com o SLA da transportadora original" } };
+        estimativa_anual: { atrasos_evitados: r0(r.atrasosEvitadosAno), valor_rs: r0(r.valorAno), frete_rs: r0(r.freteAno), valor_historico_sem_desconto_rs: r0(r.valorAtrasoHistoricoAno + r.economiaFreteAno), fator_validacao_fora_da_amostra: Math.round(r.fatorTeste * 100) / 100, obs: "valor_rs = ganho de prazo pelo histórico descontado pelo teste fora da amostra (após 29/09) + economia de frete; considera que a data prometida ao cliente foi calculada com o SLA da transportadora original" } };
     },
     novidades_do_dia: () => {
       if (dia !== 2) return { erro: "não há novidades: esta é a primeira varredura (02/11)" };

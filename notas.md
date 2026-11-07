@@ -75,3 +75,5 @@
 - [13:27] DECISÃO: perguntas ao agente viraram conversa (balão da pergunta, resposta em cartão com formato fixo Resposta/Números/O que eu faria, passos recolhidos, 3 perguntas prontas, histórico). Em modo pergunta o agente não abre chamados nem roteia.
 - [13:28] TESTE: 'Qual transportadora mais atrasa?' → 2 consultas, resposta no formato, números batem com a tabela de transportadoras (TransNorte 88,4%, Correio Ágil 88,6%).
 - [13:35] DECISÃO: cobrança dos pedidos parados passou a ser automática como a troca de transportadora (sem botões Aplicar/Cobrar todas); cada linha diz o que o agente faz: chamado no portal, reabre sem resposta em 24h, aciona financeiro se extraviou.
+- [13:45] TESTE: rota por pedido validada fora da amostra (período após 29/09): previsto +8,7 p.p. no prazo, observado +5,1 p.p. (59%); 62 de 106 trocas melhoraram.
+- [13:46] DECISÃO: rota por pedido entrou no total do impacto com valor conservador: ganho de prazo × 59% (desconto do teste) + economia de frete R$ 128 mil = R$ 396 mil/ano (histórico puro daria R$ 583 mil, mostrado fora do total). Sem sobreposição com regiões de troca padrão. Total passa de ~R$ 2,8 mi para R$ 3,2 mi/ano.

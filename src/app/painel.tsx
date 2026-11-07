@@ -563,6 +563,8 @@ function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof pl
     { t: "Cobrar a transportadora que falha (+1 dia de folga)", d: "menos atrasos, cancelamentos e reclamações", tipo: "recorrente", ...grupo((x) => x.acao === "incidente") },
     { t: "Prometer mais dias onde atrasa e compensa", d: "menos atrasos sem perder venda", tipo: "recorrente", ...grupo((x) => x.acao === "mais_margem") },
     { t: "Trocar a transportadora padrão da região", d: "entrega melhor e prazo menor", tipo: "recorrente", ...grupo((x) => x.acao === "rotear") },
+    { t: "Trocar a transportadora pedido a pedido (automático)", d: `${rota.roteados.length} de ${int(rota.analisados)} pedidos novos em 3 dias; ganho de prazo descontado pelo teste fora da amostra (${Math.round(rota.fatorTeste * 100)}% do previsto) + frete mais barato ${brl(rota.economiaFreteAno)}/ano`, tipo: "recorrente",
+      n: new Set(rota.roteados.map((r) => r.p3)).size, valor: rota.valorAno, atrasos: rota.atrasosEvitadosAno, cancel: 0 },
     { t: "Multa de atraso prevista nos contratos", d: "cobrança que hoje não é feita", tipo: "recorrente", n: 5, valor: multa, atrasos: 0, cancel: 0 },
   ];
   const total = linhas.reduce((a, l) => a + l.valor, 0);
@@ -597,7 +599,7 @@ function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof pl
               </tr>
             ))}
             <tr className="border-t-2 border-slate-300 font-semibold">
-              <td className="py-2">Total</td><td>{sel.length}</td>
+              <td className="py-2">Total</td><td>{new Set([...sel.map((x) => x.p3), ...rota.roteados.map((r) => r.p3)]).size}</td>
               <td className="text-right">{int(linhas.reduce((a, l) => a + l.atrasos, 0))}</td>
               <td className="text-right text-emerald-700">{brl(total)}/ano</td>
             </tr>
@@ -609,7 +611,7 @@ function ImpactoFinanceiro({ plano, rota, multa }: { plano: ReturnType<typeof pl
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
         <div className="font-medium text-slate-700">Fora do total (com mais incerteza)</div>
         <ul className="mt-1 list-disc space-y-1 pl-5">
-          <li>Troca de transportadora pedido a pedido: {rota.roteados.length} de {int(rota.analisados)} pedidos novos ({Math.round(rota.parcela * 100)}%). Estimativa pelo histórico: ≈ {brl(rota.valorAno)}/ano, mas no teste fora da amostra o ganho não se confirmou com segurança.</li>
+          <li>Troca pedido a pedido pelo histórico puro (sem desconto do teste): ≈ {brl(rota.valorAtrasoHistoricoAno + rota.economiaFreteAno)}/ano. No teste (após 29/09) a mesma troca deu +{(rota.ppTeste * 100).toFixed(1).replace(".", ",")} p.p. no prazo contra +{(rota.ppPrevisto * 100).toFixed(1).replace(".", ",")} previstos ({rota.acertosTeste} de {rota.nTeste} trocas melhoraram); por isso o total usa o valor descontado.</li>
           {tk ? <li>TikTok Shop (regra informada pela banca): {tk.destravado ? <>passar de {pct(tk.regua)} no prazo destrava ≈ {brl(tk.valorAno)}/ano.</> : <>o plano não chega à régua de {pct(tk.regua)}.</>}</li>
             : <li>TikTok Shop: desligado nas configurações (regra informada pela banca, não medida na base).</li>}
         </ul>
