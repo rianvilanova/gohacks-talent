@@ -130,22 +130,6 @@ export default function Painel() {
             Agente que descobre onde a entrega atrasa, propõe a correção e mostra quanto ela vale por ano · Gocase e GoBeauté, 154 prefixos de CEP, 5 transportadoras
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-3 text-sm">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-slate-500">Meta de entrega no prazo</span>
-            <select className="rounded-lg border border-slate-300 bg-white px-2 py-1.5" value={meta} onChange={(e) => setMeta(Number(e.target.value))}>
-              {[0.92, 0.94, 0.95, 0.96].map((m) => <option key={m} value={m}>{pct(m)} por prefixo</option>)}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-slate-500">Cliente desiste com prazo maior?</span>
-            <select className="rounded-lg border border-slate-300 bg-white px-2 py-1.5" value={queda} onChange={(e) => setQueda(Number(e.target.value))}>
-              <option value={0}>Não (0% por dia)</option>
-              <option value={0.03}>Um pouco (−3% de conversão por dia)</option>
-              <option value={0.065}>Como em SP (−6,5% por dia)</option>
-            </select>
-          </label>
-        </div>
       </header>
 
       {/* placar */}
@@ -298,7 +282,30 @@ export default function Painel() {
         </div>
       </div>
 
-      <footer className="mt-8 text-xs text-slate-500">
+      <details className="mt-8 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+        <summary className="cursor-pointer font-semibold">Premissas do cálculo</summary>
+        <div className="mt-3 flex flex-wrap items-end gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500">Meta de entrega no prazo</span>
+            <select className="rounded-lg border border-slate-300 bg-white px-2 py-1.5" value={meta} onChange={(e) => setMeta(Number(e.target.value))}>
+              {[0.92, 0.94, 0.95, 0.96].map((m) => <option key={m} value={m}>{pct(m)} por prefixo</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500">Cliente desiste com prazo maior?</span>
+            <select className="rounded-lg border border-slate-300 bg-white px-2 py-1.5" value={queda} onChange={(e) => setQueda(Number(e.target.value))}>
+              <option value={0}>Não (0% por dia)</option>
+              <option value={0.03}>Um pouco (−3% de conversão por dia)</option>
+              <option value={0.065}>Como em SP (−6,5% por dia)</option>
+            </select>
+          </label>
+          <p className="max-w-md text-xs text-slate-500">
+            Padrão: meta de 95% por prefixo e −6,5% de conversão por dia de prazo a mais que a concorrência, estimado pelo caso real de SP capital (+2 dias em 01/10).
+          </p>
+        </div>
+      </details>
+
+      <footer className="mt-4 text-xs text-slate-500">
         Números: backtest — o agente aprende com envios até {dados.corteBacktest.split("-").reverse().join("/")} e é medido nos envios seguintes (que não viu), anualizado para {int(dados.enviosPorAno)} envios/ano.
         Envios vencidos e nunca entregues contam como atraso. Dados fictícios do GoHacks Talent 2026.
       </footer>
