@@ -266,3 +266,32 @@ export function planoAcoes(d: Dados, meta = 0.95, quedaConversaoPorDia = PARAMS.
     prefixos: lista.sort((a, b) => b.valorLiquido - a.valorLiquido),
   };
 }
+
+/** Resume um subconjunto de ações (ex.: só as de saldo positivo) aplicado sobre o plano. */
+export function resumir(plano: PlanoAcoes, incluir: (x: AcaoPrefixo) => boolean) {
+  let envios = 0, noPrazoAntes = 0, noPrazoDepois = 0;
+  const r = { prefixos: 0, atrasosEvitados: 0, cancelamentosEvitados: 0, economiaDireta: 0, economiaTotal: 0, conversao: 0, freteExtra: 0, valorLiquido: 0 };
+  for (const x of plano.prefixos) {
+    const usa = incluir(x);
+    envios += x.antes.envios;
+    noPrazoAntes += x.antes.noPrazo * x.antes.envios;
+    noPrazoDepois += (usa ? x.depois : x.antes).noPrazo * x.antes.envios;
+    if (!usa) continue;
+    r.prefixos++; r.atrasosEvitados += x.atrasosEvitados; r.cancelamentosEvitados += x.cancelamentosEvitados;
+    r.economiaDireta += x.economiaDireta; r.economiaTotal += x.economiaTotal; r.conversao += x.conversao;
+    r.freteExtra += x.freteExtra; r.valorLiquido += x.valorLiquido;
+  }
+  return { ...r, noPrazoAntes: noPrazoAntes / envios, noPrazoDepois: noPrazoDepois / envios };
+}
+
+export const ehAcaoReal = (x: AcaoPrefixo) => x.acao !== "manter" && x.acao !== "sem_dados";
+export const recomendada = (x: AcaoPrefixo) => ehAcaoReal(x) && x.valorLiquido > 0;
+
+export const ROTULO_ACAO: Record<Acao, string> = {
+  manter: "Manter", mais_margem: "+ prazo", menos_margem: "− prazo", rotear: "Rotear", incidente: "Incidente", sem_dados: "Poucos dados",
+};
+
+/** Atrasos por faixa (anual) de um custo, para tabelas e para o agente. */
+export const faixasResumo = (c: Custo) => Object.fromEntries(
+  Object.entries(c.porFaixa).map(([k, v]) => [k, { atrasos: Math.round(v.atrasos), cancelamentos: Math.round(v.cancelamentos) }]),
+);

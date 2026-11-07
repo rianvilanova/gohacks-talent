@@ -148,7 +148,7 @@ const mediana = (a) => { const s = [...a].sort((x, y) => x - y); return s.length
 const prefixos = Object.entries(pref).map(([p3, P]) => {
   const cidade = Object.entries(P.cidades).sort((a, b) => b[1] - a[1])[0][0];
   const regra = regras[p3] ?? null;
-  const atende = regra ? (cobertura[`${regra.uf}|${regra.localidade === "capital" ? "capital_e_metropolitana" : regra.localidade}`] ?? cobertura[`${regra.uf}|${regra.localidade}`] ?? []) : [];
+  const atende = regra ? (cobertura[`${regra.uf}|${["capital", "metropolitana"].includes(regra.localidade) ? "capital_e_metropolitana" : regra.localidade}`] ?? cobertura[`${regra.uf}|${regra.localidade}`] ?? []) : [];
   const transp = Object.fromEntries(Object.entries(P.transp).map(([t, T]) => {
     const f = frete[`${p3}|${t}`];
     return [t, { ...T, freteMedio: f ? Math.round((f[0] / f[1]) * 100) / 100 : null }];
