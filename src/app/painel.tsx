@@ -215,8 +215,6 @@ function Painel({ simulacao }: { simulacao: boolean }) {
   const projetar = simulacao && rodou.diario && rodou.semanal;
   // ações recomendadas por região (89,1%, o que o agente informa) + troca de transportadora por pedido (atrasos evitados já descontados pelo teste fora da amostra)
   const noPrazoPlano = useMemo(() => resumir(plano, recomendada).noPrazoDepois + previaRota.atrasosEvitadosAno / dados.enviosPorAno, [dados, plano, previaRota]);
-  const abaixoAntes = plano.prefixos.filter((x) => x.acao !== "sem_dados" && x.noPrazoAntes < 0.92).length;
-  const abaixoDepois = plano.prefixos.filter((x) => x.acao !== "sem_dados" && (recomendada(x) ? x.noPrazoDepois : x.noPrazoAntes) < 0.92).length;
   const antigo = (t: string) => <span className="mr-1.5 text-base font-normal text-slate-400 line-through decoration-slate-300">{t}</span>;
 
   return (
@@ -238,7 +236,7 @@ function Painel({ simulacao }: { simulacao: boolean }) {
               setMetadeSP(e.target.checked);
               setPropostas([]); setDecisoes({}); setChamados([]); setRoteados(null); setRodadas([]); setRodou({ diario: false, semanal: false }); setAgoraMesmo(false); setUso("");
             }} />
-            <span><b>Reduzir em 50% o impacto de SP</b> <span className="text-xs text-fuchsia-800">(SP tem 19% dos pedidos, mas ~94% do ganho semanal; conta só metade das vendas recuperadas lá)</span></span>
+            <span><b>Reduzir em 50% o impacto de SP</b></span>
           </label>
           <div className="mt-3 flex flex-wrap gap-2">
             <button disabled={rodando} onClick={() => rodarAgente(undefined, "diario")} className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
@@ -305,22 +303,12 @@ function Painel({ simulacao }: { simulacao: boolean }) {
         </ul>
       </section>}
 
-      <section className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="mt-5 grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs text-slate-500">Entregas no prazo · últimos 60 dias</div>
           <div className="num mt-1 text-3xl font-semibold">{projetar ? <>{antigo(pct(plano.antes.noPrazo))}<span className="text-emerald-700">→ {Math.round(noPrazoPlano * 100)}%</span></> : pct(plano.antes.noPrazo)}</div>
           {simulacao ? (projetar && <div className="text-xs text-emerald-700">projeção: regiões + troca por pedido</div>)
             : <div className={`text-xs ${plano.antes.noPrazo < 0.92 ? "text-rose-700" : "text-emerald-700"}`}>meta da política: 92% por região</div>}
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-xs text-slate-500">Pedidos parados há 3+ dias</div>
-          <div className="num mt-1 text-3xl font-semibold">{int(torre.emRisco.length)}</div>
-          <div className="text-xs text-slate-500">{int(torre.emRisco.filter((e) => e.vencido).length)} já passaram da data prometida{simulacao && rodou.diario && <span className="text-emerald-700"> · {int(chamados.length)} cobrados pelo agente</span>}</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-xs text-slate-500">Regiões abaixo da meta</div>
-          <div className="num mt-1 text-3xl font-semibold">{projetar ? <>{antigo(String(abaixoAntes))}<span className="text-emerald-700">→ {abaixoDepois}</span></> : abaixoAntes}<span className="text-base font-normal text-slate-400"> de 154</span></div>
-          {(!simulacao || projetar) && <div className="text-xs text-slate-500">o agente age em {plano.prefixos.filter((x) => x.acao !== "sem_dados" && x.noPrazoAntes < 0.92 && (recomendada(x) || rotaPorP3.has(x.p3))).length} delas{projetar && <span className="text-emerald-700"> · {abaixoAntes - abaixoDepois} passam da meta</span>}</div>}
         </div>
         <div className={`rounded-xl border p-4 ${propostas.some((p) => !decisoes[p.id]) ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}>
           <div className="text-xs text-slate-500">Decisões aguardando o gerente</div>
@@ -407,16 +395,11 @@ function Painel({ simulacao }: { simulacao: boolean }) {
                 </div>
               </div>
 
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <div className="text-xs text-slate-500">Pedidos novos de ontem</div>
+                  <div className="text-xs text-slate-500">Pedidos novos de ontem (ainda não despachados)</div>
                   <div className="num text-2xl font-semibold">{int(pedidosOntem)}</div>
                   <div className="text-xs text-slate-500">{sugestoes.filter((sg) => sg.tipo === "rotear").length} trocados automaticamente para transportadora melhor · ganho esperado {reais(ganhoRotasOntem)}</div>
-                </div>
-                <div className="rounded-lg border border-slate-200 p-3">
-                  <div className="text-xs text-slate-500">Pedidos parados há 3+ dias</div>
-                  <div className="num text-2xl font-semibold">{int(torre.emRisco.length)}</div>
-                  <div className="text-xs text-slate-500">os 80 mais urgentes são cobrados automaticamente hoje (limite diário)</div>
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-500">Multa de atraso a cobrar</div>
