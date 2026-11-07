@@ -218,9 +218,9 @@ export default function Painel() {
         </div>
       </section>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-5">
+      <div className="mt-6 space-y-6">
         {/* ---------- esquerda: abas ---------- */}
-        <div className="lg:col-span-3">
+        <div>
           <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm">
             {([["pedidos", "Diário · pedidos de ontem"], ["regioes", "Semanal · prazo das regiões"], ["impacto", "Impacto financeiro"]] as [Aba, string][]).map(([k, t]) => (
               <button key={k} onClick={() => setAba(k)} className={`flex-1 rounded-lg px-3 py-2 ${aba === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{t}</button>
@@ -237,7 +237,7 @@ export default function Painel() {
                   <li>Abrir incidente com a transportadora que falha numa região</li>
                   <li>Trocar a transportadora padrão da região</li>
                 </ul>
-                <div className="mt-1 text-violet-800">Essas mudanças mexem no site: o agente propõe, o gerente aprova (“Decisões para o gerente”, à direita).</div>
+                <div className="mt-1 text-violet-800">Essas mudanças mexem no site: o agente propõe, o gerente aprova (“Decisões para o gerente”, logo abaixo).</div>
               </div>
               <h2 className="font-semibold">Situação de cada região (CEP)</h2>
               <p className="text-xs text-slate-500">Passe o mouse sobre cada situação para ver o significado.</p>
@@ -367,8 +367,8 @@ export default function Painel() {
         </div>
 
         {/* ---------- direita: agente e gerente ---------- */}
-        <div className="space-y-4 lg:col-span-2">
-          <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
+        <div className="space-y-4">
+          <div className="flex max-w-md rounded-xl border border-slate-200 bg-white p-1 text-sm">
             <button onClick={voltarParaHoje} className={`flex-1 rounded-lg px-3 py-2 ${dia === 1 ? "bg-slate-900 text-white" : "text-slate-600"}`}>Hoje, 02/11</button>
             <button onClick={irParaDiaSeguinte} disabled={rodando} className={`flex-1 rounded-lg px-3 py-2 ${dia === 2 ? "bg-fuchsia-700 text-white" : "text-slate-600"}`}>Amanhã, 03/11 (simulado)</button>
           </div>
@@ -413,7 +413,7 @@ export default function Painel() {
                 {pacoteTiktok.length > 0 && <span className="block text-xs">{tiktokAprovado ? <>TikTok Shop destravado: +{brl(tk!.valorAno)}/ano</> : <>Aprove as {pacoteTiktok.length} decisões marcadas “TikTok” para destravar {brl(tk?.valorAno ?? 0)}/ano</>}</span>}
               </div>
             )}
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 grid items-start gap-2 md:grid-cols-2 xl:grid-cols-3">
               {propostas.length === 0 && <p className="text-sm text-slate-400">{dia === 2 && eventos.some((e) => e.tipo === "final") ? "Nada novo para decidir hoje: o que foi aprovado ontem segue valendo." : "O agente traz aqui as decisões que precisam de aprovação."}</p>}
               {propostas.map((p) => (
                 <div key={p.id} className={`rounded-lg border p-3 text-sm ${decisoes[p.id] === "aprovada" ? "border-emerald-300 bg-emerald-50/50" : decisoes[p.id] === "recusada" ? "border-slate-200 opacity-50" : "border-slate-200"}`}>
